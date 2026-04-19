@@ -1,0 +1,25 @@
+{
+  "name": "skilled-pr",
+  "version": "0.1.0",
+  "description": "Open review transport for AI-native development. Attestation that your code was reviewed by AI skills.",
+  "type": "module",
+  "bin": {
+    "skilled-pr": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "dev": "bun run src/cli.ts"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "claude-code",
+    "github",
+    "attestation",
+    "developer-tools"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

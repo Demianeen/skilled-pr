@@ -21,5 +21,8 @@
   "license": "MIT",
   "devDependencies": {
     "bun-types": "latest"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
   }
 }

@@ -1,3 +1,5 @@
+import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
+
 export interface SkilledPRConfig {
   requiredSkills: string[];
   sha: "head" | "pushed";
@@ -10,15 +12,24 @@ const DEFAULT_CONFIG: SkilledPRConfig = {
   statusName: "Skilled PR",
 };
 
-export function stripJsonComments(jsonc: string): string {
-  return jsonc
-    .replace(/\/\/.*$/gm, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/,\s*([}\]])/g, "$1");
-}
-
 export function parseConfig(raw: string): SkilledPRConfig {
-  const parsed = JSON.parse(stripJsonComments(raw));
+  const errors: ParseError[] = [];
+  const parsed = parseJsonc(raw, errors, {
+    allowTrailingComma: true,
+    allowEmptyContent: false,
+  });
+
+  if (errors.length > 0) {
+    const { error, offset, length } = errors[0];
+    throw new Error(
+      `Invalid .skilledpr.jsonc: ${printParseErrorCode(error)} at offset ${offset} (length ${length})`,
+    );
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Invalid .skilledpr.jsonc: top-level value must be an object");
+  }
+
   return { ...DEFAULT_CONFIG, ...parsed };
 }
 

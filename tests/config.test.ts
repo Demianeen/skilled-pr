@@ -1,19 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseConfig, stripJsonComments } from "../src/config";
-
-describe("stripJsonComments", () => {
-  test("removes single-line comments", () => {
-    expect(stripJsonComments('{ "a": 1 // comment\n}')).toBe('{ "a": 1 \n}');
-  });
-
-  test("removes multi-line comments", () => {
-    expect(stripJsonComments('{ /* hi */ "a": 1 }')).toBe('{  "a": 1 }');
-  });
-
-  test("removes trailing commas before } and ]", () => {
-    expect(stripJsonComments('{ "a": [1, 2,], "b": 3, }')).toBe('{ "a": [1, 2], "b": 3}');
-  });
-});
+import { parseConfig } from "../src/config";
 
 describe("parseConfig", () => {
   test("parses full JSONC config with comments and trailing commas", () => {
@@ -51,7 +37,26 @@ describe("parseConfig", () => {
     });
   });
 
-  test("throws on invalid JSON", () => {
-    expect(() => parseConfig("{ not valid }")).toThrow();
+  test("does not mangle // or /* */ inside strings (string-aware)", () => {
+    // This is the key correctness win vs the old regex parser.
+    const raw = `{ "statusName": "CI // PR review", "sha": "head" }`;
+    expect(parseConfig(raw).statusName).toBe("CI // PR review");
+  });
+
+  test("preserves /* ... */ inside strings", () => {
+    const raw = `{ "statusName": "see /* old docs */ for context" }`;
+    expect(parseConfig(raw).statusName).toBe("see /* old docs */ for context");
+  });
+
+  test("throws on invalid JSON with a descriptive message", () => {
+    expect(() => parseConfig("{ not valid }")).toThrow(/Invalid \.skilledpr\.jsonc/);
+  });
+
+  test("throws when top-level is an array", () => {
+    expect(() => parseConfig("[]")).toThrow(/top-level value must be an object/);
+  });
+
+  test("throws when top-level is a string", () => {
+    expect(() => parseConfig('"just a string"')).toThrow(/top-level value must be an object/);
   });
 });

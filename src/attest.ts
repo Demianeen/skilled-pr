@@ -65,10 +65,14 @@ function hasExistingStatus(remote: GitHubRemote, sha: string, context: string): 
   const proc = Bun.spawnSync([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/commits/${sha}/statuses`,
-    "--jq", `.[] | select(.context == $ctx) | .state`,
-    "--arg", "ctx", context,
   ]);
-  return proc.exitCode === 0 && proc.stdout.toString().trim().length > 0;
+  if (proc.exitCode !== 0) return false;
+  try {
+    const statuses = JSON.parse(proc.stdout.toString()) as Array<{ context: string }>;
+    return statuses.some((s) => s.context === context);
+  } catch {
+    return false;
+  }
 }
 
 function postStatus(remote: GitHubRemote, sha: string, context: string, skillName: string) {

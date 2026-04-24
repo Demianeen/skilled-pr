@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 
 export type Severity = "error" | "warning" | "info";
 export type DiffSide = "LEFT" | "RIGHT";
+export type FailOn = "error" | "warning" | "none";
 
 /** What a review skill produces. Minimal shape; tool adds the rest. */
 export interface FindingInput {
@@ -157,4 +158,44 @@ export function formatCommentBody(finding: Finding, skillName: string): string {
 export function extractFingerprint(commentBody: string): string | null {
   const match = commentBody.match(/<!-- skilled-pr:fp:([a-f0-9]+) -->/);
   return match ? match[1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// Severity threshold + status description
+// ---------------------------------------------------------------------------
+
+const FAIL_ON_BLOCKS: Record<FailOn, ReadonlySet<Severity>> = {
+  error: new Set<Severity>(["error"]),
+  warning: new Set<Severity>(["error", "warning"]),
+  none: new Set<Severity>(),
+};
+
+/** Findings whose severity, under the given policy, should fail the check. */
+export function findingsExceedingThreshold(findings: Finding[], failOn: FailOn): Finding[] {
+  const blocks = FAIL_ON_BLOCKS[failOn];
+  return findings.filter((f) => blocks.has(f.severity));
+}
+
+export interface SeverityCounts {
+  error: number;
+  warning: number;
+  info: number;
+}
+
+export function countBySeverity(findings: Finding[]): SeverityCounts {
+  const counts: SeverityCounts = { error: 0, warning: 0, info: 0 };
+  for (const f of findings) counts[f.severity]++;
+  return counts;
+}
+
+/** Compact human description for a GitHub commit-status (140-char limit). */
+export function buildStatusDescription(skillName: string, findings: Finding[] | null): string {
+  if (findings === null) return `Reviewed by ${skillName}`;
+  if (findings.length === 0) return `${skillName} — no findings`;
+  const c = countBySeverity(findings);
+  const parts: string[] = [];
+  if (c.error) parts.push(`${c.error} error${c.error === 1 ? "" : "s"}`);
+  if (c.warning) parts.push(`${c.warning} warning${c.warning === 1 ? "" : "s"}`);
+  if (c.info) parts.push(`${c.info} info`);
+  return `${skillName} — ${parts.join(", ")}`;
 }

@@ -1,12 +1,16 @@
-import { loadConfig } from "./config";
+import { loadConfig, type SkilledPRConfig } from "./config";
 import { parseGitHubRemote, buildStatusContext, type GitHubRemote } from "./github";
 import { parseAttestArgs } from "./args";
 import {
   parseFindings,
   formatCommentBody,
   extractFingerprint,
+  findingsExceedingThreshold,
+  buildStatusDescription,
   type Finding,
 } from "./findings";
+
+type StatusState = "success" | "failure";
 
 export async function attest(args: string[]) {
   const parsed = parseAttestArgs(args);
@@ -45,10 +49,10 @@ export async function attest(args: string[]) {
 
   // --- Findings (Phase 1.5) -------------------------------------------------
 
-  if (findingsPath) {
-    const findings = await loadFindings(findingsPath);
-    const prNumber = getPullRequestForSha(remote, sha);
+  const findings = findingsPath ? await loadFindings(findingsPath) : null;
 
+  if (findings !== null) {
+    const prNumber = getPullRequestForSha(remote, sha);
     if (prNumber === null) {
       console.warn(
         `Skilled PR: no open PR found for ${sha.slice(0, 7)}. ${findings.length} finding(s) not posted.`,
@@ -61,19 +65,32 @@ export async function attest(args: string[]) {
     }
   }
 
-  // --- Status (Phase 1) ----------------------------------------------------
+  // --- Status (Phase 1 + Phase 1.5 severity gate) ---------------------------
 
+  const { state, description } = computeStatus(findings, config, skillName);
   const context = buildStatusContext(config.statusName, skillName);
 
-  if (hasExistingStatus(remote, sha, context)) {
+  if (statusAlreadyMatches(remote, sha, context, state, description)) {
     console.log(
-      `Skilled PR: "${context}" already attested for ${sha.slice(0, 7)}. Skipping status.`,
+      `Skilled PR: "${context}" already ${state} on ${sha.slice(0, 7)} with matching description. Skipping status.`,
     );
     process.exit(0);
   }
 
-  postStatus(remote, sha, context, skillName);
-  console.log(`Skilled PR ✓ — attested "${skillName}" on ${sha.slice(0, 7)}`);
+  postStatus(remote, sha, context, state, description);
+  const icon = state === "success" ? "✓" : "✗";
+  console.log(`Skilled PR ${icon} — ${description} on ${sha.slice(0, 7)}`);
+}
+
+function computeStatus(
+  findings: Finding[] | null,
+  config: SkilledPRConfig,
+  skillName: string,
+): { state: StatusState; description: string } {
+  const description = buildStatusDescription(skillName, findings);
+  if (findings === null) return { state: "success", description };
+  const blocking = findingsExceedingThreshold(findings, config.failOn);
+  return { state: blocking.length > 0 ? "failure" : "success", description };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,28 +218,53 @@ function isCommitPushed(sha: string): boolean {
   return proc.exitCode === 0 && proc.stdout.toString().trim().length > 0;
 }
 
-function hasExistingStatus(remote: GitHubRemote, sha: string, context: string): boolean {
+/**
+ * The GitHub commit-status API lets you POST multiple statuses per (sha,
+ * context) — the latest wins visually. Dedupe here means: only skip if the
+ * *most recent* status for our context already has the same state AND
+ * description. If any detail differs (a new severity count, a flip from
+ * success to failure), we want to POST to replace it.
+ */
+function statusAlreadyMatches(
+  remote: GitHubRemote,
+  sha: string,
+  context: string,
+  state: StatusState,
+  description: string,
+): boolean {
   const proc = Bun.spawnSync([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/commits/${sha}/statuses`,
   ]);
   if (proc.exitCode !== 0) return false;
   try {
-    const statuses = JSON.parse(proc.stdout.toString()) as Array<{ context: string }>;
-    return statuses.some((s) => s.context === context);
+    const statuses = JSON.parse(proc.stdout.toString()) as Array<{
+      context: string;
+      state: string;
+      description: string | null;
+    }>;
+    // GitHub returns statuses most recent first.
+    const latest = statuses.find((s) => s.context === context);
+    return latest?.state === state && (latest?.description ?? "") === description;
   } catch {
     return false;
   }
 }
 
-function postStatus(remote: GitHubRemote, sha: string, context: string, skillName: string) {
+function postStatus(
+  remote: GitHubRemote,
+  sha: string,
+  context: string,
+  state: StatusState,
+  description: string,
+) {
   const proc = Bun.spawnSync([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/statuses/${sha}`,
     "-X", "POST",
-    "-f", "state=success",
+    "-f", `state=${state}`,
     "-f", `context=${context}`,
-    "-f", `description=Reviewed by ${skillName}`,
+    "-f", `description=${description}`,
   ]);
 
   if (proc.exitCode !== 0) {

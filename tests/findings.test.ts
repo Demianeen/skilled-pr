@@ -4,8 +4,21 @@ import {
   parseFindings,
   formatCommentBody,
   extractFingerprint,
+  findingsExceedingThreshold,
+  countBySeverity,
+  buildStatusDescription,
   type Finding,
 } from "../src/findings";
+
+// helper to build findings for threshold tests
+const fp = (sev: Finding["severity"]): Finding => ({
+  path: "a.ts",
+  line: 1,
+  severity: sev,
+  title: "t",
+  body: "b",
+  fingerprint: `fp-${sev}`,
+});
 
 // ---------------------------------------------------------------------------
 // computeFingerprint
@@ -187,5 +200,90 @@ describe("extractFingerprint", () => {
 
   test("ignores malformed markers", () => {
     expect(extractFingerprint("<!-- skilled-pr:other:abc -->")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findingsExceedingThreshold
+// ---------------------------------------------------------------------------
+
+describe("findingsExceedingThreshold", () => {
+  test("failOn=error blocks only errors", () => {
+    const findings = [fp("error"), fp("warning"), fp("info")];
+    const blocks = findingsExceedingThreshold(findings, "error");
+    expect(blocks.map((f) => f.severity)).toEqual(["error"]);
+  });
+
+  test("failOn=warning blocks errors + warnings", () => {
+    const findings = [fp("error"), fp("warning"), fp("info")];
+    const blocks = findingsExceedingThreshold(findings, "warning");
+    expect(blocks.map((f) => f.severity)).toEqual(["error", "warning"]);
+  });
+
+  test("failOn=none blocks nothing", () => {
+    const findings = [fp("error"), fp("warning"), fp("info")];
+    expect(findingsExceedingThreshold(findings, "none")).toEqual([]);
+  });
+
+  test("empty findings always pass regardless of policy", () => {
+    expect(findingsExceedingThreshold([], "error")).toEqual([]);
+    expect(findingsExceedingThreshold([], "warning")).toEqual([]);
+    expect(findingsExceedingThreshold([], "none")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countBySeverity
+// ---------------------------------------------------------------------------
+
+describe("countBySeverity", () => {
+  test("tallies each severity", () => {
+    const findings = [fp("error"), fp("error"), fp("warning"), fp("info")];
+    expect(countBySeverity(findings)).toEqual({ error: 2, warning: 1, info: 1 });
+  });
+
+  test("zero counts for absent severities", () => {
+    expect(countBySeverity([fp("info")])).toEqual({ error: 0, warning: 0, info: 1 });
+    expect(countBySeverity([])).toEqual({ error: 0, warning: 0, info: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStatusDescription
+// ---------------------------------------------------------------------------
+
+describe("buildStatusDescription", () => {
+  test("no --findings flag ⇒ legacy phrasing", () => {
+    expect(buildStatusDescription("review", null)).toBe("Reviewed by review");
+  });
+
+  test("empty findings array ⇒ explicit 'no findings'", () => {
+    expect(buildStatusDescription("review", [])).toBe("review — no findings");
+  });
+
+  test("single severity", () => {
+    expect(buildStatusDescription("review", [fp("error")])).toBe("review — 1 error");
+    expect(buildStatusDescription("review", [fp("warning")])).toBe("review — 1 warning");
+  });
+
+  test("multiple severities", () => {
+    const findings = [fp("error"), fp("error"), fp("warning"), fp("info")];
+    expect(buildStatusDescription("review", findings)).toBe(
+      "review — 2 errors, 1 warning, 1 info",
+    );
+  });
+
+  test("omits zero-count severities", () => {
+    const findings = [fp("info"), fp("info")];
+    expect(buildStatusDescription("review", findings)).toBe("review — 2 info");
+  });
+
+  test("stays under GitHub's 140-char status-description limit for 10x findings of each kind", () => {
+    const findings = [
+      ...Array.from({ length: 10 }, () => fp("error")),
+      ...Array.from({ length: 10 }, () => fp("warning")),
+      ...Array.from({ length: 10 }, () => fp("info")),
+    ];
+    expect(buildStatusDescription("a-skill-with-a-long-name:review", findings).length).toBeLessThanOrEqual(140);
   });
 });

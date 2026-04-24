@@ -14,6 +14,7 @@ describe("parseConfig", () => {
       requiredSkills: ["review", "coderabbit:review"],
       sha: "pushed",
       statusName: "My Check",
+      failOn: "error",
     });
   });
 
@@ -22,6 +23,7 @@ describe("parseConfig", () => {
       requiredSkills: ["a"],
       sha: "head",
       statusName: "Skilled PR",
+      failOn: "error",
     });
   });
 
@@ -34,7 +36,24 @@ describe("parseConfig", () => {
       requiredSkills: ["review"],
       sha: "head",
       statusName: "Skilled PR",
+      failOn: "error",
     });
+  });
+
+  test("accepts failOn: \"warning\"", () => {
+    expect(parseConfig('{ "failOn": "warning" }').failOn).toBe("warning");
+  });
+
+  test("accepts failOn: \"none\"", () => {
+    expect(parseConfig('{ "failOn": "none" }').failOn).toBe("none");
+  });
+
+  test("rejects unknown failOn values", () => {
+    expect(() => parseConfig('{ "failOn": "critical" }')).toThrow(/failOn/);
+  });
+
+  test("rejects non-string failOn", () => {
+    expect(() => parseConfig('{ "failOn": 0 }')).toThrow(/failOn/);
   });
 
   test("does not mangle // or /* */ inside strings (string-aware)", () => {

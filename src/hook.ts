@@ -67,14 +67,17 @@ export function slugifySkill(name: string): string {
 export function buildReminder(skillName: string): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
+  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`;
   return [
     `This repo gates merges via skilled-pr. The \`${skillName}\` skill you just loaded is listed in \`.skilledpr.jsonc\` as a required review.`,
     "",
-    "After completing your review, do these two things in order:",
+    "After completing your review, do these three things in order:",
     "",
     `1. Write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
     "",
-    `2. Run: \`skilled-pr attest --skill ${skillName} --findings ${findingsPath}\``,
+    `2. Run: \`${attestCommand}\``,
+    "",
+    "3. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run `git push` and then re-run the attest command from step 2. Do NOT push without asking — pushing modifies the remote.",
     "",
     "This posts the GitHub status check that gates the PR. Without it, the PR cannot merge.",
   ].join("\n");

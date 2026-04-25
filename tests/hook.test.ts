@@ -131,6 +131,15 @@ describe("buildReminder", () => {
   test("tells the model what to do when there are no findings", () => {
     expect(buildReminder("review")).toContain("[]");
   });
+
+  test("includes the exit-code-2 push-recovery instruction", () => {
+    // The model needs to know how to recover when attest fails because
+    // HEAD isn't on remote yet — see attest.ts pre-flight check.
+    const r = buildReminder("review");
+    expect(r).toContain("exits with code 2");
+    expect(r).toContain("git push");
+    expect(r).toMatch(/ask the user/i);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@
     "bun-types": "latest"
   },
   "dependencies": {
-    "jsonc-parser": "^3.3.1"
+    "jsonc-parser": "^3.3.1",
+    "zod": "^4.3.6"
   }
 }

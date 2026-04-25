@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -8,16 +9,30 @@ export type Severity = "error" | "warning" | "info";
 export type DiffSide = "LEFT" | "RIGHT";
 export type FailOn = "error" | "warning" | "none";
 
-/** What a review skill produces. Minimal shape; tool adds the rest. */
-export interface FindingInput {
-  path: string;
-  line: number;
-  side?: DiffSide;
-  severity: Severity;
-  title: string;
-  body: string;
-  suggestion?: string;
-}
+// ---------------------------------------------------------------------------
+// Schema — single source of truth.
+//
+// `FindingInputSchema` defines what review skills are expected to write into
+// `.review/findings-<skill>.json`. The same shape is described in plain English
+// by `findingsSchemaForPrompt()` below, which is embedded into the system
+// reminder injected by the PostToolUse hook. Co-locating the two means a
+// schema change forces a docstring change in the same edit.
+// ---------------------------------------------------------------------------
+
+export const FindingInputSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().min(1),
+  side: z.enum(["LEFT", "RIGHT"]).optional(),
+  severity: z.enum(["error", "warning", "info"]),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  suggestion: z.string().optional(),
+});
+
+export const FindingsInputSchema = z.array(FindingInputSchema);
+
+/** What a review skill produces. Inferred from the zod schema. */
+export type FindingInput = z.infer<typeof FindingInputSchema>;
 
 /** A finding after the tool has enriched it with a fingerprint. */
 export interface Finding extends FindingInput {
@@ -42,86 +57,68 @@ export function computeFingerprint(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Parsing + validation
+// Parsing + validation (zod-backed)
 // ---------------------------------------------------------------------------
 
 export function parseFindings(raw: string): Finding[] {
-  const parsed = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`findings input must be valid JSON: ${(e as Error).message}`);
+  }
+
+  // Catch the most common shape error with a friendlier message than zod's
+  // "Expected array, received object." This message is asserted in tests.
   if (!Array.isArray(parsed)) {
     throw new Error("findings input must be a JSON array of findings");
   }
-  return parsed.map((item, i) => validateAndEnrich(item, i));
+
+  const result = FindingsInputSchema.safeParse(parsed);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw new Error(`${formatIssuePath(issue.path)}: ${issue.message}`);
+  }
+
+  return result.data.map((f) => ({
+    ...f,
+    fingerprint: computeFingerprint({ path: f.path, title: f.title, body: f.body }),
+  }));
 }
 
-function validateAndEnrich(item: unknown, index: number): Finding {
-  if (typeof item !== "object" || item === null) {
-    throw new Error(`findings[${index}] must be an object`);
+/**
+ * Format a zod issue path into the dotted/bracket form the existing tests
+ * assert against, e.g. `[0, "path"]` → `"findings[0].path"`.
+ */
+function formatIssuePath(path: ReadonlyArray<string | number | symbol>): string {
+  let out = "findings";
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      out += `[${segment}]`;
+    } else {
+      out += `.${String(segment)}`;
+    }
   }
-  const f = item as Record<string, unknown>;
-
-  const path = requireString(f, "path", index);
-  const line = requireNumber(f, "line", index);
-  const severity = requireSeverity(f, "severity", index);
-  const title = requireString(f, "title", index);
-  const body = requireString(f, "body", index);
-
-  const side = optionalSide(f, "side", index);
-  const suggestion = optionalString(f, "suggestion", index);
-
-  const fingerprint = computeFingerprint({ path, title, body });
-
-  return {
-    path,
-    line,
-    side,
-    severity,
-    title,
-    body,
-    suggestion,
-    fingerprint,
-  };
+  return out;
 }
 
-function requireString(f: Record<string, unknown>, key: string, i: number): string {
-  const v = f[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new Error(`findings[${i}].${key} must be a non-empty string`);
-  }
-  return v;
-}
-
-function requireNumber(f: Record<string, unknown>, key: string, i: number): number {
-  const v = f[key];
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
-    throw new Error(`findings[${i}].${key} must be a positive integer`);
-  }
-  return v;
-}
-
-function requireSeverity(f: Record<string, unknown>, key: string, i: number): Severity {
-  const v = f[key];
-  if (v !== "error" && v !== "warning" && v !== "info") {
-    throw new Error(`findings[${i}].${key} must be "error", "warning", or "info"`);
-  }
-  return v;
-}
-
-function optionalString(f: Record<string, unknown>, key: string, i: number): string | undefined {
-  if (!(key in f) || f[key] === undefined || f[key] === null) return undefined;
-  const v = f[key];
-  if (typeof v !== "string") {
-    throw new Error(`findings[${i}].${key} must be a string if provided`);
-  }
-  return v;
-}
-
-function optionalSide(f: Record<string, unknown>, key: string, i: number): DiffSide | undefined {
-  if (!(key in f) || f[key] === undefined || f[key] === null) return undefined;
-  const v = f[key];
-  if (v !== "LEFT" && v !== "RIGHT") {
-    throw new Error(`findings[${i}].${key} must be "LEFT" or "RIGHT" if provided`);
-  }
-  return v;
+/**
+ * Plain-text description of `FindingInputSchema` for embedding in
+ * `additionalContext` system reminders. Co-located with the schema so a
+ * schema change forces a docstring change in the same diff.
+ */
+export function findingsSchemaForPrompt(): string {
+  return [
+    "Each finding must have:",
+    '  - path: string (repo-relative file path)',
+    "  - line: integer (1-based line on the right side of the diff)",
+    '  - severity: "error" | "warning" | "info"',
+    "  - title: short headline (1 line)",
+    "  - body: full explanation (markdown supported)",
+    "  - suggestion?: optional fix suggestion (string)",
+    '  - side?: "LEFT" | "RIGHT" (defaults to RIGHT)',
+    "If your review found nothing, write an empty array `[]`.",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------

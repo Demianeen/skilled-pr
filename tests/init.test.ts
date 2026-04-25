@@ -108,4 +108,18 @@ describe("mergeSkilledPRHooks", () => {
     mergeSkilledPRHooks(existing);
     expect(JSON.stringify(existing)).toBe(before);
   });
+
+  test("does not share the PostToolUse array reference with the input", () => {
+    // Defense against a future refactor where we accidentally mutate
+    // entries in-place: the output's array should be a fresh object.
+    const existing: ClaudeSettings = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "log-bash" }] },
+        ],
+      },
+    };
+    const out = mergeSkilledPRHooks(existing);
+    expect(out.hooks!.PostToolUse).not.toBe(existing.hooks!.PostToolUse);
+  });
 });

@@ -139,6 +139,27 @@ describe("parseFindings", () => {
     ]);
     expect(() => parseFindings(raw)).toThrow(/findings\[1\]\.body/);
   });
+
+  // zod's .min(1) on path/title/body — boundary tests beyond the
+  // pre-zod hand-rolled validators.
+  test("rejects empty path", () => {
+    const raw = JSON.stringify([{ path: "", line: 1, severity: "info", title: "t", body: "b" }]);
+    expect(() => parseFindings(raw)).toThrow(/findings\[0\]\.path/);
+  });
+
+  test("rejects empty title", () => {
+    const raw = JSON.stringify([{ path: "a", line: 1, severity: "info", title: "", body: "b" }]);
+    expect(() => parseFindings(raw)).toThrow(/findings\[0\]\.title/);
+  });
+
+  test("rejects empty body", () => {
+    const raw = JSON.stringify([{ path: "a", line: 1, severity: "info", title: "t", body: "" }]);
+    expect(() => parseFindings(raw)).toThrow(/findings\[0\]\.body/);
+  });
+
+  test("array of primitives produces a path-prefixed error", () => {
+    expect(() => parseFindings("[1, 2, 3]")).toThrow(/findings\[0\]/);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ export interface Finding extends FindingInput {
 }
 
 // ---------------------------------------------------------------------------
-// Fingerprinting (per plan line 218)
+// Fingerprinting
 //   SHA256(path + ":" + title + ":" + first_20_chars_of_body)
 // ---------------------------------------------------------------------------
 

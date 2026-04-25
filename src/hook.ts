@@ -108,6 +108,12 @@ export function buildHookOutput(
  * CLI entry point. Reads stdin, parses, decides, prints. Always exits 0 so
  * a misconfigured skilled-pr never blocks the model — broken hook = silent
  * no-op, not a stalled session.
+ *
+ * Hot-path note: Claude Code fires this hook after every PostToolUse for
+ * `Skill` AND for every UserPromptExpansion. Bail before the disk read
+ * (`loadConfig`) when the event clearly has nothing to do with us, so the
+ * dominant case (non-Skill PostToolUse, non-required-skill UserPromptExpansion)
+ * does no I/O.
  */
 export async function hook() {
   let event: HookEvent;
@@ -119,6 +125,10 @@ export async function hook() {
     console.error(`skilled-pr hook: malformed stdin (${(e as Error).message})`);
     return;
   }
+
+  // Early bail: skip the config read entirely when the event resolves to no
+  // skill name (irrelevant tools, malformed events, builtin slash-commands).
+  if (extractSkillName(event) === null) return;
 
   let config;
   try {

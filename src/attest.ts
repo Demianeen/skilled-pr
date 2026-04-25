@@ -47,7 +47,7 @@ export async function attest(args: string[]) {
     process.exit(0);
   }
 
-  // --- Findings (Phase 1.5) -------------------------------------------------
+  // --- Findings ------------------------------------------------------------
 
   const findings = findingsPath ? await loadFindings(findingsPath) : null;
 
@@ -65,7 +65,7 @@ export async function attest(args: string[]) {
     }
   }
 
-  // --- Status (Phase 1 + Phase 1.5 severity gate) ---------------------------
+  // --- Status (with severity gate) -----------------------------------------
 
   const { state, description } = computeStatus(findings, config, skillName);
   const context = buildStatusContext(config.statusName, skillName);
@@ -94,7 +94,7 @@ function computeStatus(
 }
 
 // ---------------------------------------------------------------------------
-// Findings helpers (Phase 1.5)
+// Findings helpers
 // ---------------------------------------------------------------------------
 
 async function loadFindings(path: string): Promise<Finding[]> {
@@ -198,7 +198,7 @@ function postFindingsAsComments(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 helpers (unchanged)
+// Status helpers
 // ---------------------------------------------------------------------------
 
 function getCommitSha(): string | null {

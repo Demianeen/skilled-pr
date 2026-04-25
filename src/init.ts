@@ -30,17 +30,12 @@ export interface ClaudeSettings {
  * existing settings.
  */
 export function mergeSkilledPRHooks(existing: ClaudeSettings | null): ClaudeSettings {
-  const settings: ClaudeSettings = existing
-    ? { ...existing, hooks: { ...(existing.hooks ?? {}) } }
-    : { hooks: {} };
-
-  // narrowing helper — settings.hooks is now guaranteed defined
-  const hooks = settings.hooks!;
+  const hooks: NonNullable<ClaudeSettings["hooks"]> = { ...(existing?.hooks ?? {}) };
 
   ensureSkilledPRHook(hooks, "PostToolUse", "Skill");
   ensureSkilledPRHook(hooks, "UserPromptExpansion", "");
 
-  return settings;
+  return { ...(existing ?? {}), hooks };
 }
 
 function ensureSkilledPRHook(

@@ -54,16 +54,40 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 
 ## Working with the PR gate
 
-Every PR to `main` must pass the `Skilled PR / review` commit status. To attest
-a review locally:
+Every PR to `main` must pass the `Skilled PR / review` commit status. The flow
+is plug-and-play — you don't run `attest` by hand:
+
+1. In Claude Code, invoke a required review skill (e.g. `/review`). The
+   skills listed under `requiredSkills` in `.skilledpr.jsonc` are the gate.
+2. The `skilled-pr hook` (installed into `.claude/settings.json` by
+   `skilled-pr init`) fires on `PostToolUse:Skill` / `UserPromptExpansion`
+   and injects a system reminder telling the model to:
+     - write findings to `.review/findings-<skill-slug>.json` as a JSON array
+       (schema in `src/findings.ts`), and
+     - run `skilled-pr attest --skill <name> --findings <path>`.
+3. `attest` posts each new finding as an inline PR comment (deduped by
+   fingerprint across re-runs) and posts the commit-status check against
+   `HEAD`. Severity gates the status state via `failOn` in the config.
+
+The status is posted per-SHA. If you push a new commit, the previous
+attestation does **not** carry over — re-invoke the skill (or run `attest`
+manually) on the new HEAD.
+
+### Manual attestation
+
+If you need to bypass the hook (debugging, scripted CI, dogfooding this
+repo's own CLI without `bun link`-ing it globally):
 
 ```
-bun run src/cli.ts attest --skill review
+bun run src/cli.ts attest --skill review [--findings <path>]
 ```
 
-The status is posted against the current `HEAD` of the PR branch. If you push
-a new commit to the branch, the previous attestation does **not** carry over —
-you must re-run `attest` on the new SHA.
+### Unpushed HEAD recovery
+
+`attest` pre-flight-checks that `HEAD` is on the remote. If not, it exits
+with code **2** and prints push instructions. The system reminder tells the
+model to ask the user before running `git push` — pushing modifies the
+remote, so don't bypass the confirmation step.
 
 ## Pre-commit self-review
 

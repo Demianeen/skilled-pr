@@ -3,14 +3,12 @@ import type { FailOn } from "./findings";
 
 export interface SkilledPRConfig {
   requiredSkills: string[];
-  sha: "head" | "pushed";
   statusName: string;
   failOn: FailOn;
 }
 
 const DEFAULT_CONFIG: SkilledPRConfig = {
   requiredSkills: ["review"],
-  sha: "head",
   statusName: "Skilled PR",
   failOn: "error",
 };
@@ -31,6 +29,22 @@ export function parseConfig(raw: string): SkilledPRConfig {
 
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Invalid .skilledpr.jsonc: top-level value must be an object");
+  }
+
+  // The `sha` field used to control whether attestation skipped silently or
+  // failed loudly when HEAD wasn't on the remote. Both modes hit the same
+  // GitHub constraint (status posts to unknown SHAs are 404'd), so the field
+  // didn't actually let you "attest an unpushed commit" — it just controlled
+  // error verbosity. Removed in favour of always-loud failure with exit code 2,
+  // which the agentic plug-and-play loop relies on for recovery. Users who
+  // want silent-skip semantics can wrap the call: `skilled-pr attest ... || true`.
+  if ("sha" in (parsed as Record<string, unknown>)) {
+    throw new Error(
+      `Invalid .skilledpr.jsonc: the "sha" field is no longer supported. ` +
+      `Remove it from your config — attest now always errors with exit code 2 ` +
+      `if HEAD isn't pushed (so the agentic recovery loop can fire). ` +
+      `For silent-skip semantics, wrap the call in your shell: skilled-pr attest ... || true`,
+    );
   }
 
   const merged = { ...DEFAULT_CONFIG, ...parsed };
@@ -54,9 +68,6 @@ export function generateDefaultConfig(): string {
   return `{
   // Which review skills must run before merge
   "requiredSkills": ["review"],
-
-  // When to attest: "head" (default) or "pushed" (only if HEAD is on remote)
-  "sha": "head",
 
   // The name shown on GitHub status checks
   "statusName": "Skilled PR",

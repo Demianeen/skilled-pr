@@ -6,13 +6,10 @@ describe("parseConfig", () => {
     const raw = `{
       // required skills
       "requiredSkills": ["review", "coderabbit:review"],
-      /* sha policy */
-      "sha": "pushed",
       "statusName": "My Check",
     }`;
     expect(parseConfig(raw)).toEqual({
       requiredSkills: ["review", "coderabbit:review"],
-      sha: "pushed",
       statusName: "My Check",
       failOn: "error",
     });
@@ -21,20 +18,18 @@ describe("parseConfig", () => {
   test("merges defaults for missing fields", () => {
     expect(parseConfig('{ "requiredSkills": ["a"] }')).toEqual({
       requiredSkills: ["a"],
-      sha: "head",
       statusName: "Skilled PR",
       failOn: "error",
     });
   });
 
   test("user fields override defaults", () => {
-    expect(parseConfig('{ "sha": "pushed" }').sha).toBe("pushed");
+    expect(parseConfig('{ "statusName": "Custom" }').statusName).toBe("Custom");
   });
 
   test("returns defaults for empty object", () => {
     expect(parseConfig("{}")).toEqual({
       requiredSkills: ["review"],
-      sha: "head",
       statusName: "Skilled PR",
       failOn: "error",
     });
@@ -58,7 +53,7 @@ describe("parseConfig", () => {
 
   test("does not mangle // or /* */ inside strings (string-aware)", () => {
     // This is the key correctness win vs the old regex parser.
-    const raw = `{ "statusName": "CI // PR review", "sha": "head" }`;
+    const raw = `{ "statusName": "CI // PR review" }`;
     expect(parseConfig(raw).statusName).toBe("CI // PR review");
   });
 
@@ -77,5 +72,19 @@ describe("parseConfig", () => {
 
   test("throws when top-level is a string", () => {
     expect(() => parseConfig('"just a string"')).toThrow(/top-level value must be an object/);
+  });
+
+  // ---- Migration: legacy `sha` field ----
+  // The `sha` field used to be `"head" | "pushed"`. We removed it; the parser
+  // must surface a clear migration error so users can fix their configs.
+
+  test("rejects legacy `sha` field with a migration message", () => {
+    expect(() => parseConfig('{ "sha": "head" }')).toThrow(/sha.*no longer supported/);
+  });
+
+  test("migration message mentions the recovery wrapper for silent-skip workflows", () => {
+    // Users who relied on `sha: "pushed"` for passive-skip semantics need to
+    // know how to keep that behavior in their shell.
+    expect(() => parseConfig('{ "sha": "pushed" }')).toThrow(/skilled-pr attest .* \|\| true/);
   });
 });

@@ -2,9 +2,6 @@
   // Which review skills must run before merge
   "requiredSkills": ["review"],
 
-  // When to attest: "head" (default) or "pushed" (only if HEAD is on remote)
-  "sha": "head",
-
   // The name shown on GitHub status checks
   "statusName": "Skilled PR"
 }

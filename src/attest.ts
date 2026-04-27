@@ -43,16 +43,12 @@ export async function attest(args: string[]) {
   // GitHub rejects commit-status posts for SHAs that aren't on the remote
   // ("Not Found (HTTP 404)"). Pre-flight here so the model gets a clear,
   // actionable error instead of a 404 deep in the call stack.
+  //
+  // Exit code 2 is the explicit "needs push" signal — distinct from generic
+  // exit 1 — so the system reminder injected by the hook can pattern-match it
+  // and offer push recovery. Users who want silent skip in passive workflows
+  // (e.g. post-commit hooks) can wrap the call: `skilled-pr attest ... || true`.
   if (!isCommitPushed(sha)) {
-    if (config.sha === "pushed") {
-      console.warn(
-        `Skilled PR: HEAD (${sha.slice(0, 7)}) is not pushed to remote. Skipping attestation (sha policy: pushed).`,
-      );
-      process.exit(0);
-    }
-    // sha policy is "head" — fail with a recovery hint the model can act on.
-    // Exit code 2 is the explicit "needs push" signal; the system reminder
-    // tells the agent to detect it and offer to push.
     const retry = findingsPath
       ? `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`
       : `skilled-pr attest --skill ${skillName}`;

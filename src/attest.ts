@@ -141,18 +141,26 @@ function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null 
 }
 
 function fetchExistingFingerprints(remote: GitHubRemote, prNumber: number): Set<string> {
+  // `gh api --paginate` emits multiple concatenated JSON arrays for PRs with
+  // >100 comments (one array per page). `JSON.parse` chokes on that. `--slurp`
+  // wraps the pages into a single Array<Array<...>> which we flatten. Without
+  // slurp, the parse silently fails → empty Set → every finding posts again as
+  // a duplicate on every re-run. Found by adversarial review.
   const proc = Bun.spawnSync([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
     "--paginate",
+    "--slurp",
   ]);
   const seen = new Set<string>();
   if (proc.exitCode !== 0) return seen;
   try {
-    const comments = JSON.parse(proc.stdout.toString()) as Array<{ body: string }>;
-    for (const c of comments) {
-      const fp = extractFingerprint(c.body);
-      if (fp) seen.add(fp);
+    const pages = JSON.parse(proc.stdout.toString()) as Array<Array<{ body: string }>>;
+    for (const page of pages) {
+      for (const c of page) {
+        const fp = extractFingerprint(c.body);
+        if (fp) seen.add(fp);
+      }
     }
   } catch {
     // malformed JSON from gh — treat as no existing fingerprints
@@ -227,8 +235,17 @@ function getRemote(): GitHubRemote | null {
   return parseGitHubRemote(proc.stdout.toString());
 }
 
+/**
+ * Is `sha` reachable on `origin` (the remote we post statuses to)? `git branch
+ * -r --contains` lists hits across ALL remotes by default, so a sha that exists
+ * on `upstream` but not `origin` would falsely pass — then `gh api ... statuses
+ * /<sha>` 404s on origin. Scope the lookup to origin/* with `--list`. Found by
+ * adversarial review of fork-based workflows.
+ */
 function isCommitPushed(sha: string): boolean {
-  const proc = Bun.spawnSync(["git", "branch", "-r", "--contains", sha]);
+  const proc = Bun.spawnSync([
+    "git", "branch", "-r", "--contains", sha, "--list", "origin/*",
+  ]);
   return proc.exitCode === 0 && proc.stdout.toString().trim().length > 0;
 }
 

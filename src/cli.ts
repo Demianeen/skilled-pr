@@ -24,6 +24,11 @@ switch (command) {
     await doctor();
     break;
   }
+  case "enable-gate": {
+    const { enableGate } = await import("./branch-protection");
+    await enableGate();
+    break;
+  }
   default:
     console.log(`skilled-pr v0.1.0 — Open review transport for AI-native development
 
@@ -35,6 +40,9 @@ Usage:
                                      something seems off — checks bun, gh,
                                      auth, repo state, config, hooks, and
                                      branch protection.
+  skilled-pr enable-gate             Add the Skilled PR status checks to your
+                                     default branch's protection rules. Additive
+                                     — preserves any existing rules.
   skilled-pr hook                    Internal: Claude Code hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review

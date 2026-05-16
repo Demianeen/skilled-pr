@@ -1,5 +1,10 @@
 import { loadConfig, type SkilledPRConfig } from "./config";
-import { parseGitHubRemote, buildStatusContext, type GitHubRemote } from "./github";
+import {
+  parseGitHubRemote,
+  buildStatusContext,
+  classifyGhError,
+  type GitHubRemote,
+} from "./github";
 import { parseAttestArgs } from "./args";
 import {
   parseFindings,
@@ -208,8 +213,9 @@ function postFindingsAsComments(
 
     if (proc.exitCode !== 0) {
       const stderr = proc.stderr.toString();
+      const classified = classifyGhError(stderr, { operation: "post-comment", remote });
       console.error(
-        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}\n${stderr}`,
+        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}.\n\n${classified.message}`,
       );
       process.exit(1);
     }
@@ -300,11 +306,8 @@ function postStatus(
 
   if (proc.exitCode !== 0) {
     const stderr = proc.stderr.toString();
-    if (stderr.includes("auth") || stderr.includes("login")) {
-      console.error("Skilled PR: gh is not authenticated. Run 'gh auth login' first.");
-    } else {
-      console.error(`Skilled PR: failed to post status.\n${stderr}`);
-    }
+    const classified = classifyGhError(stderr, { operation: "post-status", remote });
+    console.error(classified.message);
     process.exit(1);
   }
 }

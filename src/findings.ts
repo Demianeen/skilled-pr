@@ -158,6 +158,95 @@ export function extractFingerprint(commentBody: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Artifact summary comment (per-skill, top-level on the PR)
+//
+// While inline fingerprint-marked comments cover individual findings, the
+// artifact comment is the single per-skill summary that posts even when
+// there are zero findings. Without it, the only PR-visible evidence of a
+// review is a green status check — easy to fabricate or miss. The artifact
+// is the audit trail: it tells reviewers "this skill ran on this commit
+// and produced N findings of severity X/Y/Z."
+//
+// Posted as a top-level PR comment (issues endpoint), edited (PATCHed) on
+// each re-attestation so there's only ever ONE artifact per skill. Marker
+// `<!-- skilled-pr:artifact:<skill-name> -->` lets us find and update it.
+// Distinct from the inline `:fp:<hash>` marker — no collision risk.
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the per-skill artifact summary comment. Always include the marker
+ * at end-of-body so subsequent runs can find and edit this comment.
+ */
+export function formatArtifactComment(
+  skillName: string,
+  sha: string,
+  findings: Finding[],
+  failOn: FailOn,
+): string {
+  const counts = countBySeverity(findings);
+  const blocking = findingsExceedingThreshold(findings, failOn);
+  const isBlocked = blocking.length > 0;
+  const icon = isBlocked ? "🚫" : findings.length === 0 ? "✅" : "⚠️";
+  const shortSha = sha.slice(0, 7);
+
+  const parts: string[] = [];
+  parts.push(`## ${icon} \`${skillName}\` reviewed \`${shortSha}\``);
+  parts.push("");
+
+  if (findings.length === 0) {
+    parts.push("**Findings:** 0");
+    parts.push("");
+    parts.push("No issues found in the diff.");
+  } else {
+    const breakdown = formatSeverityBreakdown(counts);
+    parts.push(`**Findings:** ${findings.length} (${breakdown})`);
+    parts.push("");
+    if (isBlocked) {
+      const label = blocking.length === 1 ? "finding has" : "findings have";
+      parts.push(
+        `**🚫 This PR is blocked** because \`failOn: ${failOn}\` is set and ${blocking.length} ${label} severity at or above that threshold.`,
+      );
+    } else {
+      parts.push(
+        `Findings exist but none reach the \`failOn: ${failOn}\` threshold — the gate is passing.`,
+      );
+    }
+    parts.push("");
+    parts.push("See inline comments on the PR for details on each finding.");
+  }
+
+  parts.push("");
+  parts.push(`<sub>via \`skilled-pr\` · updated on each attestation</sub>`);
+  parts.push(`<!-- skilled-pr:artifact:${skillName} -->`);
+
+  return parts.join("\n");
+}
+
+/**
+ * Format the severity breakdown for the comment header, e.g.
+ *   "1 🔴 error · 2 🟡 warning · 0 🔵 info"  →  "1 🔴 error · 2 🟡 warning"
+ * Zero-count severities are omitted so the header stays scannable.
+ */
+function formatSeverityBreakdown(counts: SeverityCounts): string {
+  const parts: string[] = [];
+  if (counts.error > 0) parts.push(`${counts.error} 🔴 error`);
+  if (counts.warning > 0) parts.push(`${counts.warning} 🟡 warning`);
+  if (counts.info > 0) parts.push(`${counts.info} 🔵 info`);
+  return parts.join(" · ");
+}
+
+/**
+ * Extract the skill name from an artifact comment body, or null if not
+ * present. Used to match existing comments for PATCH-vs-POST routing.
+ */
+export function extractArtifactSkillName(commentBody: string): string | null {
+  // Skill names: letters, digits, colons (plugin namespace), dashes, underscores.
+  // Stop before whitespace or the closing ` -->`.
+  const match = commentBody.match(/<!-- skilled-pr:artifact:([a-zA-Z0-9:_-]+) -->/);
+  return match ? match[1] : null;
+}
+
+// ---------------------------------------------------------------------------
 // Severity threshold + status description
 // ---------------------------------------------------------------------------
 

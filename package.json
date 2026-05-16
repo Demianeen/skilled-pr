@@ -18,7 +18,28 @@
     "attestation",
     "developer-tools"
   ],
+  "author": "Feliche-Demian Netliukh",
   "license": "MIT",
+  "homepage": "https://github.com/Demianeen/skilled-pr#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Demianeen/skilled-pr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Demianeen/skilled-pr/issues"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "bun-types": "latest"
   },

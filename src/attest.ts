@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { loadConfig, type SkilledPRConfig } from "./config";
 import {
   parseGitHubRemote,
@@ -16,6 +18,36 @@ import {
   extractArtifactSkillName,
   type Finding,
 } from "./findings";
+
+// ---------------------------------------------------------------------------
+// Process helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a command synchronously, returning normalized stdout/stderr/exit code.
+ * Node's `spawnSync` takes (command, args[], options), unlike Bun's which
+ * takes a single argv array. With `encoding: "utf8"` we get strings back
+ * instead of Buffers. `status` can be null when the process was killed by
+ * a signal — treat that as -1 to keep the contract simple for callers.
+ *
+ * Stdin is piped via the `input` option when supplied (matches Bun's
+ * `{ stdin: Buffer.from(...) }` shape we used to use).
+ */
+function run(args: string[], stdin?: string): {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+} {
+  const proc = spawnSync(args[0], args.slice(1), {
+    encoding: "utf8",
+    input: stdin,
+  });
+  return {
+    stdout: proc.stdout ?? "",
+    stderr: proc.stderr ?? "",
+    exitCode: proc.status ?? -1,
+  };
+}
 
 type StatusState = "success" | "failure";
 
@@ -137,13 +169,12 @@ function computeStatus(
 // ---------------------------------------------------------------------------
 
 async function loadFindings(path: string): Promise<Finding[]> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
+  if (!existsSync(path)) {
     console.error(`Skilled PR: findings file not found: ${path}`);
     process.exit(1);
   }
   try {
-    return parseFindings(await file.text());
+    return parseFindings(readFileSync(path, "utf8"));
   } catch (err) {
     console.error(`Skilled PR: invalid findings file: ${(err as Error).message}`);
     process.exit(1);
@@ -151,13 +182,13 @@ async function loadFindings(path: string): Promise<Finding[]> {
 }
 
 function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null {
-  const proc = Bun.spawnSync([
+  const proc = run([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/commits/${sha}/pulls`,
   ]);
   if (proc.exitCode !== 0) return null;
   try {
-    const pulls = JSON.parse(proc.stdout.toString()) as Array<{ number: number; state: string }>;
+    const pulls = JSON.parse(proc.stdout) as Array<{ number: number; state: string }>;
     const open = pulls.find((p) => p.state === "open");
     return open ? open.number : null;
   } catch {
@@ -171,7 +202,7 @@ function fetchExistingFingerprints(remote: GitHubRemote, prNumber: number): Set<
   // wraps the pages into a single Array<Array<...>> which we flatten. Without
   // slurp, the parse silently fails → empty Set → every finding posts again as
   // a duplicate on every re-run. Found by adversarial review.
-  const proc = Bun.spawnSync([
+  const proc = run([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
     "--paginate",
@@ -180,7 +211,7 @@ function fetchExistingFingerprints(remote: GitHubRemote, prNumber: number): Set<
   const seen = new Set<string>();
   if (proc.exitCode !== 0) return seen;
   try {
-    const pages = JSON.parse(proc.stdout.toString()) as Array<Array<{ body: string }>>;
+    const pages = JSON.parse(proc.stdout) as Array<Array<{ body: string }>>;
     for (const page of pages) {
       for (const c of page) {
         const fp = extractFingerprint(c.body);
@@ -221,19 +252,18 @@ function postFindingsAsComments(
       side: finding.side ?? "RIGHT",
     });
 
-    const proc = Bun.spawnSync(
+    const proc = run(
       [
         "gh", "api",
         `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
         "-X", "POST",
         "--input", "-",
       ],
-      { stdin: Buffer.from(payload) },
+      payload,
     );
 
     if (proc.exitCode !== 0) {
-      const stderr = proc.stderr.toString();
-      const classified = classifyGhError(stderr, { operation: "post-comment", remote });
+      const classified = classifyGhError(proc.stderr, { operation: "post-comment", remote });
       console.error(
         `Skilled PR: failed to post comment for ${finding.path}:${finding.line}.\n\n${classified.message}`,
       );
@@ -256,7 +286,7 @@ function findExistingArtifactComment(
   prNumber: number,
   skillName: string,
 ): number | null {
-  const proc = Bun.spawnSync([
+  const proc = run([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/issues/${prNumber}/comments`,
     "--paginate",
@@ -265,7 +295,7 @@ function findExistingArtifactComment(
   if (proc.exitCode !== 0) return null;
   try {
     // --paginate --slurp wraps each page's array into an outer array.
-    const pages = JSON.parse(proc.stdout.toString()) as Array<Array<{ id: number; body: string }>>;
+    const pages = JSON.parse(proc.stdout) as Array<Array<{ id: number; body: string }>>;
     for (const page of pages) {
       for (const c of page) {
         if (extractArtifactSkillName(c.body) === skillName) return c.id;
@@ -297,17 +327,17 @@ function postOrUpdateArtifactComment(
 
   if (existingId !== null) {
     // Update existing — PATCH /issues/comments/<id>
-    const proc = Bun.spawnSync(
+    const proc = run(
       [
         "gh", "api",
         `repos/${remote.owner}/${remote.repo}/issues/comments/${existingId}`,
         "-X", "PATCH",
         "--input", "-",
       ],
-      { stdin: Buffer.from(payload) },
+      payload,
     );
     if (proc.exitCode !== 0) {
-      const classified = classifyGhError(proc.stderr.toString(), {
+      const classified = classifyGhError(proc.stderr, {
         operation: "edit-comment",
         remote,
       });
@@ -318,17 +348,17 @@ function postOrUpdateArtifactComment(
   }
 
   // Create new — POST /issues/<n>/comments
-  const proc = Bun.spawnSync(
+  const proc = run(
     [
       "gh", "api",
       `repos/${remote.owner}/${remote.repo}/issues/${prNumber}/comments`,
       "-X", "POST",
       "--input", "-",
     ],
-    { stdin: Buffer.from(payload) },
+    payload,
   );
   if (proc.exitCode !== 0) {
-    const classified = classifyGhError(proc.stderr.toString(), {
+    const classified = classifyGhError(proc.stderr, {
       operation: "post-comment",
       remote,
     });
@@ -343,15 +373,15 @@ function postOrUpdateArtifactComment(
 // ---------------------------------------------------------------------------
 
 function getCommitSha(): string | null {
-  const proc = Bun.spawnSync(["git", "rev-parse", "HEAD"]);
+  const proc = run(["git", "rev-parse", "HEAD"]);
   if (proc.exitCode !== 0) return null;
-  return proc.stdout.toString().trim();
+  return proc.stdout.trim();
 }
 
 function getRemote(): GitHubRemote | null {
-  const proc = Bun.spawnSync(["git", "remote", "get-url", "origin"]);
+  const proc = run(["git", "remote", "get-url", "origin"]);
   if (proc.exitCode !== 0) return null;
-  return parseGitHubRemote(proc.stdout.toString());
+  return parseGitHubRemote(proc.stdout);
 }
 
 /**
@@ -362,10 +392,10 @@ function getRemote(): GitHubRemote | null {
  * adversarial review of fork-based workflows.
  */
 function isCommitPushed(sha: string): boolean {
-  const proc = Bun.spawnSync([
+  const proc = run([
     "git", "branch", "-r", "--contains", sha, "--list", "origin/*",
   ]);
-  return proc.exitCode === 0 && proc.stdout.toString().trim().length > 0;
+  return proc.exitCode === 0 && proc.stdout.trim().length > 0;
 }
 
 /**
@@ -382,13 +412,13 @@ function statusAlreadyMatches(
   state: StatusState,
   description: string,
 ): boolean {
-  const proc = Bun.spawnSync([
+  const proc = run([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/commits/${sha}/statuses`,
   ]);
   if (proc.exitCode !== 0) return false;
   try {
-    const statuses = JSON.parse(proc.stdout.toString()) as Array<{
+    const statuses = JSON.parse(proc.stdout) as Array<{
       context: string;
       state: string;
       description: string | null;
@@ -408,7 +438,7 @@ function postStatus(
   state: StatusState,
   description: string,
 ) {
-  const proc = Bun.spawnSync([
+  const proc = run([
     "gh", "api",
     `repos/${remote.owner}/${remote.repo}/statuses/${sha}`,
     "-X", "POST",
@@ -418,8 +448,7 @@ function postStatus(
   ]);
 
   if (proc.exitCode !== 0) {
-    const stderr = proc.stderr.toString();
-    const classified = classifyGhError(stderr, { operation: "post-status", remote });
+    const classified = classifyGhError(proc.stderr, { operation: "post-status", remote });
     console.error(classified.message);
     process.exit(1);
   }

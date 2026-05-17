@@ -29,6 +29,18 @@
 import { loadConfig } from "./config";
 import { findingsSchemaForPrompt } from "./findings";
 
+/**
+ * Read stdin to completion as a UTF-8 string. Node's process.stdin is a
+ * Readable stream, not a one-shot promise like Bun.stdin.text(), so we
+ * collect chunks via async iteration. Returns "" if stdin is empty/closed.
+ */
+async function readStdin(): Promise<string> {
+  let data = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) data += chunk;
+  return data;
+}
+
 interface HookEvent {
   hook_event_name?: string;
   tool_name?: string;
@@ -121,7 +133,7 @@ export function buildHookOutput(
 export async function hook() {
   let event: HookEvent;
   try {
-    const stdin = await Bun.stdin.text();
+    const stdin = await readStdin();
     if (stdin.trim().length === 0) return;
     event = JSON.parse(stdin) as HookEvent;
   } catch (e) {

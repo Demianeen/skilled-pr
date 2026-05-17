@@ -1,6 +1,8 @@
 // skilled-pr init
 // Sets up Skilled PR in the current repo.
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { generateDefaultConfig } from "./config";
 
@@ -60,24 +62,35 @@ function ensureSkilledPRHook(
   ];
 }
 
+/**
+ * Write `contents` to `path`, creating the parent directory if needed.
+ * Mirrors `Bun.write`'s auto-mkdir behaviour, which we relied on for
+ * `.claude/settings.json` (the `.claude/` dir doesn't exist in a fresh repo).
+ */
+function writeFileWithMkdir(path: string, contents: string) {
+  const dir = dirname(path);
+  if (dir && dir !== "." && !existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(path, contents);
+}
+
 export async function init() {
   console.log("Skilled PR — setting up...\n");
 
   // 1. Create .skilledpr.jsonc
-  const configFile = Bun.file(".skilledpr.jsonc");
-  if (await configFile.exists()) {
+  if (existsSync(".skilledpr.jsonc")) {
     console.log("✓ .skilledpr.jsonc already exists");
   } else {
-    await Bun.write(".skilledpr.jsonc", generateDefaultConfig());
+    writeFileWithMkdir(".skilledpr.jsonc", generateDefaultConfig());
     console.log("✓ Created .skilledpr.jsonc");
   }
 
   // 2. Install Claude Code hooks. Read-merge-write so we never clobber the
   //    user's existing settings (formatters, notification hooks, etc.).
-  const settingsFile = Bun.file(CLAUDE_SETTINGS_PATH);
   let existing: ClaudeSettings | null = null;
-  if (await settingsFile.exists()) {
-    const raw = await settingsFile.text();
+  if (existsSync(CLAUDE_SETTINGS_PATH)) {
+    const raw = readFileSync(CLAUDE_SETTINGS_PATH, "utf8");
     // jsonc-parser tolerates // and /* */ comments some users keep in their
     // settings; standard JSON.parse would throw.
     existing = parseJsonc(raw) as ClaudeSettings;
@@ -89,7 +102,7 @@ export async function init() {
   if (before === after) {
     console.log(`✓ ${CLAUDE_SETTINGS_PATH} already has skilled-pr hooks`);
   } else {
-    await Bun.write(CLAUDE_SETTINGS_PATH, JSON.stringify(merged, null, 2) + "\n");
+    writeFileWithMkdir(CLAUDE_SETTINGS_PATH, JSON.stringify(merged, null, 2) + "\n");
     console.log(`✓ Updated ${CLAUDE_SETTINGS_PATH} with skilled-pr hooks`);
   }
 
@@ -98,8 +111,9 @@ export async function init() {
 Next steps:
 
   1. Make sure \`skilled-pr\` is on your PATH (the hooks invoke it as
-     \`skilled-pr hook\`). Install globally with \`bun add -g skilled-pr\`
-     or pin a per-project install and adjust .claude/settings.json.
+     \`skilled-pr hook\`). Install globally with \`npm i -g skilled-pr\`
+     (or \`pnpm add -g skilled-pr\`) or pin a per-project install and
+     adjust .claude/settings.json.
 
   2. Review \`.skilledpr.jsonc\` and list which review skills must run
      before merge under \`requiredSkills\`.

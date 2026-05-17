@@ -1,4 +1,9 @@
-#!/usr/bin/env bun
+// No shebang here on purpose. tsup's `banner.js` (see tsup.config.ts) adds
+// `#!/usr/bin/env node` to the built dist/cli.js. If we also put it in the
+// source, esbuild bundles it INTO the output and the banner prepends a
+// duplicate, which Node rejects with "Invalid or unexpected token" on the
+// second `#`. Dev mode runs `tsx src/cli.ts` (see scripts.dev), which
+// doesn't need a shebang.
 export {};
 
 const command = process.argv[2];
@@ -37,7 +42,7 @@ Usage:
   skilled-pr attest --skill <name>   Post attestation that a review skill ran
                        [--findings <path>]
   skilled-pr doctor [--why]          Diagnose your local setup. Run this when
-                                     something seems off — checks bun, gh,
+                                     something seems off - checks node, gh,
                                      auth, repo state, config, hooks, and
                                      branch protection. Pass --why (or -v)
                                      to see why each check matters.

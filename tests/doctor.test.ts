@@ -23,19 +23,42 @@ describe("classifyNodeVersion", () => {
     expect(r.fix).toContain("nodejs.org");
   });
 
-  test("normal version output (v-prefixed) → pass with version", () => {
+  test("v22+ (v-prefixed) → pass with version", () => {
     // `node --version` prints "vX.Y.Z\n" - verify we keep the `v` in detail.
-    const r = classifyNodeVersion("v20.11.0\n");
+    const r = classifyNodeVersion("v22.11.0\n");
     expect(r.status).toBe("pass");
-    expect(r.detail).toBe("v20.11.0");
+    expect(r.detail).toBe("v22.11.0");
   });
 
-  test("bare semver (forward-compat) → pass", () => {
+  test("bare semver (forward-compat) at v22+ → pass", () => {
     // Defensive: if a Node-compatible runtime ever drops the `v` prefix,
     // we still accept it.
-    const r = classifyNodeVersion("20.11.0\n");
+    const r = classifyNodeVersion("22.11.0\n");
     expect(r.status).toBe("pass");
-    expect(r.detail).toBe("20.11.0");
+    expect(r.detail).toBe("22.11.0");
+  });
+
+  test("v24 (newer LTS) → pass", () => {
+    // Forward-compat: anything above the floor passes.
+    const r = classifyNodeVersion("v24.0.0\n");
+    expect(r.status).toBe("pass");
+  });
+
+  test("v20 (below required floor) → fail with upgrade hint", () => {
+    // engines.node is >=22, and tsup targets node22, so anything below 22
+    // will SyntaxError at runtime. The doctor must catch this explicitly;
+    // otherwise we report "green" then crash on first invocation.
+    const r = classifyNodeVersion("v20.11.0\n");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("v20.11.0");
+    expect(r.detail).toContain("below required");
+    expect(r.fix).toContain("nvm install 22");
+  });
+
+  test("v18 (older EOL'd LTS) → fail", () => {
+    const r = classifyNodeVersion("v18.20.0\n");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("below required");
   });
 
   test("unexpected output → warn", () => {
@@ -403,8 +426,9 @@ describe("classifiers populate `why` for every status branch", () => {
   // branch without it.
 
   test("classifyNodeVersion has why on pass + fail", () => {
-    expect(classifyNodeVersion("v20.11.0").why).toBeDefined();
-    expect(classifyNodeVersion(null).why).toBeDefined();
+    expect(classifyNodeVersion("v22.11.0").why).toBeDefined(); // pass
+    expect(classifyNodeVersion("v20.11.0").why).toBeDefined(); // fail (below floor)
+    expect(classifyNodeVersion(null).why).toBeDefined(); // fail (not found)
   });
 
   test("classifyGhVersion has why on pass + fail", () => {

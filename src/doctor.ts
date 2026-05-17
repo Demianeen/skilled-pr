@@ -36,12 +36,20 @@ export interface CheckResult {
 // ---------------------------------------------------------------------------
 
 const WHY_NODE =
-  "skilled-pr runs on Node; the dist/cli.js shebang is `#!/usr/bin/env node`. Without node on PATH, `skilled-pr` won't execute even if it was installed.";
+  "skilled-pr runs on Node; the dist/cli.js shebang is `#!/usr/bin/env node`. Without node on PATH, `skilled-pr` won't execute even if it was installed. The CLI's `engines.node` is `>=22.0.0` (Node 18 and 20 are both past end-of-life); older Node versions install via npm warning-only and then crash at runtime with a SyntaxError, so the doctor enforces the floor explicitly.";
+
+/** Minimum Node major version the CLI supports. Mirrors `engines.node` in package.json. */
+const MIN_NODE_MAJOR = 22;
 
 /**
  * Classify `node --version` output. Node stdout for `--version` is the
- * version prefixed with `v`, e.g. "v20.11.0\n". We accept both forms
+ * version prefixed with `v`, e.g. "v22.11.0\n". We accept both forms
  * (with and without the leading `v`) for forward-compat.
+ *
+ * Returns `fail` (not just `warn`) when the major version is below
+ * MIN_NODE_MAJOR, because a too-old Node will SyntaxError on the
+ * `node22`-target output esbuild emits. A green doctor must mean
+ * "ready to run", not "node is technically installed."
  */
 export function classifyNodeVersion(stdout: string | null): CheckResult {
   if (stdout === null) {
@@ -54,12 +62,23 @@ export function classifyNodeVersion(stdout: string | null): CheckResult {
     };
   }
   const version = stdout.trim();
-  if (!/^v?\d+\.\d+\.\d+/.test(version)) {
+  const match = version.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
     return {
       name: "node installed",
       status: "warn",
       detail: `unexpected version output: ${version}`,
       fix: "Verify node is properly installed: node --version",
+      why: WHY_NODE,
+    };
+  }
+  const major = parseInt(match[1], 10);
+  if (major < MIN_NODE_MAJOR) {
+    return {
+      name: "node installed",
+      status: "fail",
+      detail: `${version} (below required >=${MIN_NODE_MAJOR}.0.0)`,
+      fix: `Upgrade node: nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}`,
       why: WHY_NODE,
     };
   }
@@ -478,7 +497,7 @@ export function formatDoctorReport(
 function tryRun(args: string[]): { stdout: string | null; stderr: string | null; exitCode: number } {
   try {
     // Node's spawnSync separates command and args; status is `null` when the
-    // process was killed by a signal — treat that as -1. encoding:"utf8"
+    // process was killed by a signal - treat that as -1. encoding:"utf8"
     // gives us string stdout/stderr instead of Buffers.
     const proc = spawnSync(args[0], args.slice(1), { encoding: "utf8" });
     // ENOENT (binary not found) doesn't throw — it sets `error` and leaves

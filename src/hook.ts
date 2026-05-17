@@ -30,15 +30,77 @@ import { loadConfig } from "./config";
 import { findingsSchemaForPrompt } from "./findings";
 
 /**
- * Read stdin to completion as a UTF-8 string. Node's process.stdin is a
- * Readable stream, not a one-shot promise like Bun.stdin.text(), so we
- * collect chunks via async iteration. Returns "" if stdin is empty/closed.
+ * Hard cap on stdin size. 16 MiB is comfortably above any realistic Claude
+ * Code hook payload (PostToolUse events carry the tool_input which may
+ * include large tool transcripts, but not tens of MB). Without a cap, a
+ * misbehaving parent piping unbounded input would OOM the hook process.
  */
-async function readStdin(): Promise<string> {
-  let data = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) data += chunk;
-  return data;
+const MAX_STDIN_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Stdin idle timeout in milliseconds. Resets on every chunk; only fires
+ * when the stream is open but produces nothing. 5 s is long enough for
+ * slow IO but short enough that a dead-parent hook doesn't block the
+ * session. In the typical Claude Code flow, the parent writes the payload
+ * and closes stdin in <100 ms, so the timer effectively never fires.
+ */
+const STDIN_IDLE_TIMEOUT_MS = 5_000;
+
+/**
+ * Read stdin to completion as a UTF-8 string. Node's process.stdin is a
+ * Readable stream (not a one-shot promise like Bun.stdin.text()).
+ *
+ * Bounded on two axes to keep the hook safe on the hot path (the hook
+ * fires on every PostToolUse:Skill and every UserPromptExpansion event):
+ *   - Size cap: rejects if accumulated bytes exceed MAX_STDIN_BYTES
+ *   - Idle timeout: rejects if no chunk arrives for STDIN_IDLE_TIMEOUT_MS
+ * Both reject with an Error; the caller already wraps in try/catch and
+ * fails open (logs + returns), so a misbehaving parent never wedges the
+ * session.
+ *
+ * `stream` is parameterised so unit tests can pass a stub Readable.
+ */
+function readStdin(
+  stream: NodeJS.ReadableStream = process.stdin,
+  maxBytes = MAX_STDIN_BYTES,
+  idleTimeoutMs = STDIN_IDLE_TIMEOUT_MS,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    stream.setEncoding("utf8");
+
+    // Idle timer resets every time a chunk arrives. Triggers only when the
+    // stream is open but stalled. setTimeout's value is captured by
+    // closure so we can clear and recreate on each chunk.
+    let idleTimer: NodeJS.Timeout;
+    const onIdle = () => {
+      stream.removeAllListeners();
+      reject(new Error(`stdin idle timeout after ${idleTimeoutMs}ms (no data received)`));
+    };
+    const resetIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(onIdle, idleTimeoutMs);
+    };
+    resetIdle();
+
+    stream.on("data", (chunk: string | Buffer) => {
+      resetIdle();
+      data += chunk.toString();
+      if (data.length > maxBytes) {
+        clearTimeout(idleTimer);
+        stream.removeAllListeners();
+        reject(new Error(`stdin exceeded max size ${maxBytes} bytes`));
+      }
+    });
+    stream.on("end", () => {
+      clearTimeout(idleTimer);
+      resolve(data);
+    });
+    stream.on("error", (err: Error) => {
+      clearTimeout(idleTimer);
+      reject(err);
+    });
+  });
 }
 
 interface HookEvent {

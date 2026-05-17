@@ -1,9 +1,9 @@
 // skilled-pr init
 // Sets up Skilled PR in the current repo.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { parse as parseJsonc } from "jsonc-parser";
+import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { generateDefaultConfig } from "./config";
 
 const SKILLED_PR_HOOK_COMMAND = "skilled-pr hook";
@@ -66,13 +66,34 @@ function ensureSkilledPRHook(
  * Write `contents` to `path`, creating the parent directory if needed.
  * Mirrors `Bun.write`'s auto-mkdir behaviour, which we relied on for
  * `.claude/settings.json` (the `.claude/` dir doesn't exist in a fresh repo).
+ *
+ * Atomic via write-temp + rename: writeFileSync alone is not atomic, so a
+ * Ctrl-C or OOM kill mid-write would leave the file half-written. The next
+ * init run would then parse the corrupted JSON via jsonc-parser's
+ * error-recovery mode and merge into the partial result, silently
+ * destroying the user's settings. POSIX `rename` is atomic on the same
+ * filesystem; Windows's equivalent (MoveFileExW with MOVEFILE_REPLACE_EXISTING)
+ * is what Node's renameSync wraps.
  */
 function writeFileWithMkdir(path: string, contents: string) {
   const dir = dirname(path);
   if (dir && dir !== "." && !existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(path, contents);
+  const tmp = `${path}.tmp`;
+  try {
+    writeFileSync(tmp, contents);
+    renameSync(tmp, path);
+  } catch (err) {
+    // Best-effort cleanup so we never leave a dangling .tmp behind for
+    // the next run to confuse with an in-progress write.
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // unlinkSync throws if tmp doesn't exist; that's fine - we're cleaning up.
+    }
+    throw err;
+  }
 }
 
 export async function init() {
@@ -93,7 +114,24 @@ export async function init() {
     const raw = readFileSync(CLAUDE_SETTINGS_PATH, "utf8");
     // jsonc-parser tolerates // and /* */ comments some users keep in their
     // settings; standard JSON.parse would throw.
-    existing = parseJsonc(raw) as ClaudeSettings;
+    //
+    // jsonc-parser does best-effort error recovery by default: bad braces
+    // return a partial parse, no throw. Without explicit error checking we'd
+    // happily merge into the partial result and overwrite the user's file,
+    // silently destroying broken-but-recoverable content. Pass an errors
+    // array and refuse to proceed if parsing failed - the user can fix the
+    // syntax error or rename the file out of the way.
+    const errors: ParseError[] = [];
+    existing = parseJsonc(raw, errors, { allowTrailingComma: true }) as ClaudeSettings;
+    if (errors.length > 0) {
+      const { error, offset, length } = errors[0];
+      console.error(
+        `Skilled PR: ${CLAUDE_SETTINGS_PATH} has invalid JSON (${printParseErrorCode(error)} at offset ${offset}, length ${length}).\n` +
+          `Refusing to merge - the merge would overwrite your file with a best-effort parse and silently lose data.\n` +
+          `Fix the syntax error in ${CLAUDE_SETTINGS_PATH}, then re-run \`skilled-pr init\`.`,
+      );
+      process.exit(1);
+    }
   }
 
   const merged = mergeSkilledPRHooks(existing);

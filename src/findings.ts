@@ -208,7 +208,7 @@ export function formatArtifactComment(
       );
     } else {
       parts.push(
-        `Findings exist but none reach the \`failOn: ${failOn}\` threshold — the gate is passing.`,
+        `Findings exist but none reach the \`failOn: ${failOn}\` threshold; the gate is passing.`,
       );
     }
     parts.push("");
@@ -277,11 +277,11 @@ export function countBySeverity(findings: Finding[]): SeverityCounts {
 /** Compact human description for a GitHub commit-status (140-char limit). */
 export function buildStatusDescription(skillName: string, findings: Finding[] | null): string {
   if (findings === null) return `Reviewed by ${skillName}`;
-  if (findings.length === 0) return `${skillName} — no findings`;
+  if (findings.length === 0) return `${skillName}: no findings`;
   const c = countBySeverity(findings);
   const parts: string[] = [];
   if (c.error) parts.push(`${c.error} error${c.error === 1 ? "" : "s"}`);
   if (c.warning) parts.push(`${c.warning} warning${c.warning === 1 ? "" : "s"}`);
   if (c.info) parts.push(`${c.info} info`);
-  return `${skillName} — ${parts.join(", ")}`;
+  return `${skillName}: ${parts.join(", ")}`;
 }

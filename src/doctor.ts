@@ -336,6 +336,74 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
   };
 }
 
+const WHY_CODEX_HOOKS =
+  "Codex skills load via progressive disclosure (no Skill tool to match on), so skilled-pr hooks the UserPromptSubmit event instead. When you type a /skill-name, the hook checks it against requiredSkills and injects the attestation reminder. Without this hook, the gate cannot enforce reviews in Codex sessions.";
+
+/**
+ * Classify whether .codex/hooks.json has skilled-pr's UserPromptSubmit hook.
+ * Mirrors classifyClaudeHooks but for Codex's flatter schema.
+ */
+export function classifyCodexHooks(rawContent: string | null): CheckResult {
+  if (rawContent === null) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json not found",
+      fix: "skilled-pr init --for codex  (or just `skilled-pr init` if .codex/ exists)",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(rawContent, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json is not valid JSON",
+      fix: "Fix the syntax error or re-run `skilled-pr init --for codex`",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json top-level is not an object",
+      fix: "Fix the file shape or re-run `skilled-pr init --for codex`",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const settings = parsed as { hooks?: Array<{ event?: string; command?: string }> };
+  const hooks = settings.hooks;
+  if (!Array.isArray(hooks)) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: "no hooks array in .codex/hooks.json",
+      fix: "skilled-pr init --for codex",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const hasOurHook = hooks.some(
+    (h) => h?.event === "UserPromptSubmit" && h?.command === "skilled-pr hook",
+  );
+  if (hasOurHook) {
+    return {
+      name: "Codex hooks",
+      status: "pass",
+      detail: "UserPromptSubmit installed",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  return {
+    name: "Codex hooks",
+    status: "fail",
+    detail: "skilled-pr UserPromptSubmit hook not found",
+    fix: "skilled-pr init --for codex  (idempotent)",
+    why: WHY_CODEX_HOOKS,
+  };
+}
+
 const WHY_BRANCH_PROTECTION =
   "GitHub status checks post on every attest, but only branch protection actually GATES the merge button. Without 'Skilled PR' in required checks, the green check is decorative — PRs can merge with failing reviews. `skilled-pr enable-gate` automates this.";
 
@@ -551,9 +619,20 @@ export async function doctor(args: string[] = []) {
   const configCheck = classifySkilledPRConfig(config);
   results.push(configCheck);
 
-  // 6. Claude Code hooks
-  const settings = await readFileOrNull(".claude/settings.json");
-  results.push(classifyClaudeHooks(settings));
+  // 6. Harness hooks: Claude Code, Codex, or both.
+  //    Policy: report on every harness whose directory exists. If neither
+  //    .claude/ nor .codex/ exists, fall back to checking Claude (preserves
+  //    the historical doctor output for first-time users).
+  const claudePresent = existsSync(".claude");
+  const codexPresent = existsSync(".codex");
+  if (claudePresent || (!claudePresent && !codexPresent)) {
+    const settings = await readFileOrNull(".claude/settings.json");
+    results.push(classifyClaudeHooks(settings));
+  }
+  if (codexPresent) {
+    const codexSettings = await readFileOrNull(".codex/hooks.json");
+    results.push(classifyCodexHooks(codexSettings));
+  }
 
   // 7. Branch protection (only if we have a GitHub remote AND gh is authed)
   if (

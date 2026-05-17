@@ -6,6 +6,7 @@ import {
   classifyGitHubRemote,
   classifySkilledPRConfig,
   classifyClaudeHooks,
+  classifyCodexHooks,
   classifyBranchProtection,
   formatCheck,
   formatDoctorReport,
@@ -280,6 +281,74 @@ describe("classifyClaudeHooks", () => {
       }
     }`;
     const r = classifyClaudeHooks(settings);
+    expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyCodexHooks
+// ---------------------------------------------------------------------------
+
+describe("classifyCodexHooks", () => {
+  test("null → fail with init hint", () => {
+    const r = classifyCodexHooks(null);
+    expect(r.status).toBe("fail");
+    expect(r.fix).toContain("--for codex");
+  });
+
+  test("invalid JSON → fail", () => {
+    const r = classifyCodexHooks("{ not valid }");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("not valid JSON");
+  });
+
+  test("non-object top-level → fail", () => {
+    const r = classifyCodexHooks("[]");
+    expect(r.status).toBe("fail");
+  });
+
+  test("no hooks array → fail", () => {
+    const r = classifyCodexHooks('{ "models": {} }');
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("no hooks array");
+  });
+
+  test("UserPromptSubmit + skilled-pr hook installed → pass", () => {
+    const settings = JSON.stringify({
+      hooks: [{ event: "UserPromptSubmit", command: "skilled-pr hook" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("UserPromptSubmit");
+  });
+
+  test("hooks array exists but no skilled-pr command → fail", () => {
+    const settings = JSON.stringify({
+      hooks: [{ event: "SessionStart", command: "/usr/local/bin/notify" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("not found");
+  });
+
+  test("wrong event but right command → fail", () => {
+    // skilled-pr hook on PostToolUse won't fire for Codex skills since
+    // Codex doesn't surface them as tool calls. Must be UserPromptSubmit.
+    const settings = JSON.stringify({
+      hooks: [{ event: "PostToolUse", command: "skilled-pr hook" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("fail");
+  });
+
+  test("tolerates JSONC comments", () => {
+    const settings = `{
+      // skilled-pr Codex hook
+      "hooks": [
+        { "event": "UserPromptSubmit", "command": "skilled-pr hook" }
+      ]
+    }`;
+    const r = classifyCodexHooks(settings);
     expect(r.status).toBe("pass");
   });
 });

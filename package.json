@@ -47,13 +47,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "jsonc-parser": "^3.3.1",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
-  },
-  "dependencies": {
-    "jsonc-parser": "^3.3.1",
+    "vitest": "^2.1.0",
     "zod": "^4.3.6"
   }
 }

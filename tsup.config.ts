@@ -14,8 +14,17 @@ export default defineConfig({
   // Bundle jsonc-parser + zod into the output so the published package is
   // a single file with no runtime node_modules lookup. Smaller install,
   // faster startup, no version-skew risk between users.
+  //
+  // Both deps live in devDependencies (NOT dependencies) because they're
+  // inlined here at build time and would otherwise be installed twice for
+  // every npm i -g user. `noExternal` is explicit insurance: tsup's default
+  // is to externalise everything in `dependencies` + `peerDependencies`, so
+  // moving deps to devDependencies should also flip them to inlined — but
+  // listing them here means we don't silently break if a tsup upgrade
+  // changes the default heuristics.
   splitting: false,
   bundle: true,
+  noExternal: ["jsonc-parser", "zod"],
   // Keep the output readable — minification trades ~50KB for unreadable
   // stack traces in user bug reports. Not worth it.
   minify: false,

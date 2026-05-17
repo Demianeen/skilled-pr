@@ -5,7 +5,9 @@ name: release-please
 # fields into run: commands. The only ${{ }} expressions are:
 #   - steps.release.outputs.release_created (boolean from googleapis/release-please-action)
 #   - secrets.GITHUB_TOKEN (write-scoped, used by the action only)
-#   - secrets.NPM_TOKEN (consumed via env: NODE_AUTH_TOKEN, never echoed)
+# npm publish authenticates via OIDC Trusted Publishing (id-token: write),
+# not a long-lived NPM_TOKEN. The OIDC token is minted per-run, bound to
+# this workflow + ref, and expires in minutes; no secret to leak.
 # No untrusted input flows into a shell.
 
 on:
@@ -16,6 +18,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Required for npm OIDC Trusted Publishing: lets this run mint a
+  # short-lived OIDC token that npm verifies against the trusted publisher
+  # config (repo + workflow path + ref) on the package side.
+  id-token: write
 
 jobs:
   release-please:
@@ -49,6 +55,13 @@ jobs:
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
+      # npm 11.5.1+ is required for OIDC Trusted Publishing. Node 22 LTS
+      # bundles npm 10.x, which silently falls back to "no token, no publish"
+      # if you don't bump it. Pin to the 11.x line so future Node updates
+      # don't quietly regress us.
+      - run: npm install -g npm@^11.5.1
+        if: ${{ steps.release.outputs.release_created }}
+
       - run: pnpm install --frozen-lockfile
         if: ${{ steps.release.outputs.release_created }}
 
@@ -60,10 +73,12 @@ jobs:
       - run: pnpm build
         if: ${{ steps.release.outputs.release_created }}
 
-      # `npm publish` (not `pnpm publish`) is the publish path: it has the
-      # most reliable NODE_AUTH_TOKEN handling and is what setup-node's
-      # `registry-url` is wired for.
-      - run: npm publish --access public
+      # `npm publish` (not `pnpm publish`) is the publish path: npm has
+      # first-class OIDC Trusted Publishing support and emits a provenance
+      # attestation that consumers can verify with `npm audit signatures`.
+      # No NODE_AUTH_TOKEN: npm 11+ auto-detects the GitHub Actions OIDC
+      # token from the runner environment when `id-token: write` is set
+      # at the job level and the package is configured for the matching
+      # trusted publisher on npmjs.com.
+      - run: npm publish --access public --provenance
         if: ${{ steps.release.outputs.release_created }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

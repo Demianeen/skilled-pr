@@ -1,152 +1,155 @@
 # skilled-pr
 
-> Open review transport for AI-native development.
-> Plug an AI review skill into your PR gate without writing CI glue.
+> **AI code review that actually blocks the merge.** Plug a Claude Code review skill into your GitHub PR gate without writing any CI glue.
 
-`skilled-pr` is a small CLI that turns Claude Code skills (`/review`, `/cso`,
-`/security-review`, your own) into GitHub commit-status checks. It's
-plug-and-play: invoke a required review skill, and Claude Code automatically
-writes findings, posts them as inline PR comments, and updates the status
-check that gates merge — no manual attestation step.
+```bash
+bun add -g skilled-pr             # install
+cd your-repo
+skilled-pr init                   # writes .skilledpr.jsonc + Claude Code hooks
+skilled-pr enable-gate            # adds the status check to branch protection
+# Open a PR, invoke /review in Claude Code, watch the gate light up green.
+```
 
-## How it works
+<!-- TODO: replace with a real demo gif before launch -->
+<!-- ![skilled-pr in action](./docs/demo.gif) -->
+
+## Why this exists
+
+Existing AI review tools (CodeRabbit, PR-Agent) run on a server somewhere, see your diff cold, and post comments after the fact. AI coding harnesses (Claude Code, Cursor) review brilliantly but have no way to enforce that the review actually ran.
+
+skilled-pr is the bridge: when you invoke a review skill in Claude Code, a hook makes sure findings flow to GitHub and the PR gate updates. The reviewer is the same agent that wrote the code, so it has full session context — it knows WHY each change was made, not just what changed.
+
+No servers. No API keys. No new AI costs (uses the Claude Code subscription you already pay for). Open source.
+
+## How it works (60 seconds)
+
+```
+You invoke /review in Claude Code
+        │
+        ▼
+PostToolUse hook fires → injects system reminder:
+"after this review, write findings.json and run skilled-pr attest"
+        │
+        ▼
+Model performs the review, writes .review/findings-review.json,
+runs `skilled-pr attest --skill review --findings ...`
+        │
+        ▼
+attest posts: inline PR comments + summary comment + status check
+        │
+        ▼
+Branch protection requires the status check → PR is gated
+```
 
 Three moving pieces, no servers:
 
-1. **`.skilledpr.jsonc`** — a per-repo config listing which skills must run
-   before merge (e.g. `requiredSkills: ["review"]`).
-2. **A Claude Code hook** — installed into `.claude/settings.json` by
-   `skilled-pr init`. When Claude Code invokes a required skill, the hook
-   injects a system reminder telling the model to: write findings to
-   `.review/findings-<skill>.json`, then run `skilled-pr attest`.
-3. **`skilled-pr attest`** — posts the findings as inline PR comments
-   (deduped by fingerprint) and a `success`/`failure` commit status against
-   `HEAD`. Severity threshold is configurable (`failOn: "error" | "warning" | "none"`).
+1. **`.skilledpr.jsonc`** — per-repo config listing required skills + fail threshold.
+2. **A Claude Code hook** — installed by `skilled-pr init`. Reads stdin, injects an attestation reminder when a required skill is invoked.
+3. **`skilled-pr attest`** — posts findings as inline PR comments (deduped by fingerprint), a per-skill summary comment, and a `success`/`failure` commit status.
 
-The result: invoking `/review` in Claude Code is enough. The model handles
-the rest because the hook tells it to.
+The hook is the key insight: when the agent doing the review is also the agent posting the attestation, you can't fake the review having happened.
+
+## Self-healing recovery
+
+If `attest` fails because `HEAD` isn't on the remote (the most common error), it exits with code **2** and prints the exact retry command. The system reminder teaches the model how to recover:
+
+> If attest exits with code 2, ask the user whether to push, then re-run the attest command above.
+
+The model asks you, you say yes, it pushes, attest re-runs, status posts. No human intervention required to debug a cryptic "Not Found (HTTP 404)."
 
 ## Install
 
-Globally, so the hook can shell out to `skilled-pr` from anywhere:
-
-```
+```bash
 bun add -g skilled-pr
 ```
 
-Or, while developing this repo, link it into your global path:
-
-```
-bun link        # in this repo
-bun link skilled-pr   # in any consumer repo
-```
-
-You also need [`gh`](https://cli.github.com) authenticated (`gh auth login`)
-— `attest` shells out to it for both PR comments and commit statuses.
+Requires [Bun](https://bun.sh) (the CLI is Bun-native; pure Node won't work — see [TROUBLESHOOTING](./docs/TROUBLESHOOTING.md) if you hit shell PATH issues, especially on fish). Also requires [`gh`](https://cli.github.com) authenticated with `repo` scope.
 
 ## Setup
 
 In the repo you want to gate:
 
-```
-skilled-pr init
-```
-
-This:
-- creates `.skilledpr.jsonc` with sensible defaults,
-- merges `PostToolUse` and `UserPromptExpansion` hooks into
-  `.claude/settings.json` (preserving any hooks you already had).
-
-Then, on GitHub: **Settings → Branches → Branch protection rules**, add a rule
-for `main`, check **Require status checks to pass**, and add **Skilled PR**.
-
-## The flow, end-to-end
-
-1. You open a PR.
-2. In Claude Code, you (or the agent) run `/review` (or whichever skill you
-   listed in `requiredSkills`).
-3. The Skilled PR hook fires when the skill loads. It injects a system
-   reminder telling the model to write findings + run
-   `skilled-pr attest --skill review --findings .review/findings-review.json`.
-4. The model performs the review, writes findings as a JSON array, and runs
-   the attest command.
-5. `attest` posts each finding as an inline PR comment (deduped across
-   re-runs by a content fingerprint) and a commit status against `HEAD`.
-6. If any finding's severity exceeds your `failOn` threshold, the status is
-   `failure` — the PR is blocked. Otherwise `success` — the PR can merge.
-
-If you push a new commit, the previous attestation does not carry over. The
-status is per-SHA. Re-run the skill (or just `skilled-pr attest`) on the new
-HEAD.
-
-## Recovery: unpushed HEAD
-
-GitHub rejects status posts for SHAs that aren't on the remote. So `attest`
-pre-flight-checks `HEAD`, and if it isn't pushed, exits with code **2** and
-prints push instructions. The system reminder tells the model to:
-
-> If attest exits with code 2 ("HEAD is not pushed"), ask the user whether to
-> push the branch. After they confirm, run `git push` and then re-run the
-> attest command.
-
-So the agentic recovery loop is built in — but pushing is gated on user
-confirmation, because pushing modifies the remote.
-
-## Findings format
-
-Review skills write JSON arrays of findings to
-`.review/findings-<skill-slug>.json`. Each finding:
-
-```json
-{
-  "path": "src/foo.ts",
-  "line": 42,
-  "severity": "error",
-  "title": "SQL injection via string concat",
-  "body": "Full markdown explanation...",
-  "suggestion": "Use parameterized queries.",
-  "side": "RIGHT"
-}
+```bash
+skilled-pr init           # writes .skilledpr.jsonc + .claude/settings.json hooks
+skilled-pr enable-gate    # adds the Skilled PR status check to branch protection
+skilled-pr doctor         # verifies everything is wired up correctly
 ```
 
-The exact schema (and the prose version embedded into the system reminder)
-lives in [`src/findings.ts`](./src/findings.ts).
+That's the entire setup. Three commands. No CI workflow files to write, no secrets to manage.
 
 ## Configuration
 
-`.skilledpr.jsonc`:
+`.skilledpr.jsonc` (JSONC — comments and trailing commas allowed):
 
 ```jsonc
 {
-  // Which review skills must run before merge
+  // Which review skills must run before merge.
+  // See docs/COMPATIBLE_SKILLS.md for the list of skills that work today.
   "requiredSkills": ["review"],
 
-  // The name shown on GitHub status checks
+  // Name shown on the GitHub status check (e.g. "Skilled PR / review").
   "statusName": "Skilled PR",
 
-  // When to fail the check based on finding severity:
-  //   "error"   — fail if any finding has severity "error" (default)
-  //   "warning" — fail on either "error" or "warning"
+  // When to block the PR based on finding severity:
+  //   "error"   — block if any finding has severity "error" (default)
+  //   "warning" — block on either "error" or "warning"
   //   "none"    — always succeed if the skill attested (advisory mode)
   "failOn": "error"
 }
 ```
 
-JSONC: comments and trailing commas are fine.
+## Compatible skills
 
-## Why a hook (not a CI job)?
+skilled-pr is infrastructure, not a reviewer. The actual review work is done by skills you already have. Currently known to work:
 
-The whole point is that the agent doing the review is the agent posting the
-attestation. Putting the gate in CI puts it on the wrong side of the
-boundary: CI can't tell that `/review` actually ran on this SHA — only that
-*something* called the API. The hook closes that loop by binding the
-attestation to the same Claude Code session that invoked the skill.
+| Skill | What it does |
+|---|---|
+| `coderabbit:review` | CodeRabbit's cloud-backed AI review |
+| `gstack:review` | gstack's multi-specialist review (testing, security, perf, maintainability) |
+| `gstack:cso` | Chief Security Officer mode — OWASP/STRIDE, security-only |
+| `vercel-plugin:react-best-practices` | React-specific quality checks |
+
+Full list and selection guide: [docs/COMPATIBLE_SKILLS.md](./docs/COMPATIBLE_SKILLS.md).
+
+Want to write your own? It's ~25 lines of markdown — see [docs/SKILL_AUTHORING.md](./docs/SKILL_AUTHORING.md).
+
+## What you see on a PR
+
+For each required skill, three things post:
+
+1. **Inline comments** for each finding — file:line specific, with severity badge and an optional suggested fix block.
+2. **A summary comment** at the PR conversation level — one per skill, showing finding count by severity and whether the gate is blocked. Updated on each re-attestation.
+3. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
+
+Re-running `attest` on the same SHA is idempotent: fingerprints dedupe inline comments, the summary comment is PATCH-updated in place, status is replaced.
+
+## Documentation
+
+- [docs/SCHEMA.md](./docs/SCHEMA.md) — findings.json reference
+- [docs/SKILL_AUTHORING.md](./docs/SKILL_AUTHORING.md) — writing a custom review skill
+- [docs/COMPATIBLE_SKILLS.md](./docs/COMPATIBLE_SKILLS.md) — skills that work today
+- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) — common errors and fixes
+- [CHANGELOG.md](./CHANGELOG.md) — version history
+- [CLAUDE.md](./CLAUDE.md) — project conventions (for contributors)
+
+## CLI reference
+
+```
+skilled-pr init                    Set up Skilled PR in this repo
+skilled-pr enable-gate             Add status checks to branch protection
+skilled-pr doctor                  Diagnose your local setup
+skilled-pr attest --skill <name>   Post attestation that a skill ran
+                  [--findings <path>]
+skilled-pr hook                    Internal: Claude Code hook entry point
+```
+
+Most users only ever run `init` and `enable-gate` directly. `attest` is invoked by the model automatically; `hook` is invoked by Claude Code itself.
 
 ## Status
 
-`skilled-pr` is pre-1.0 and used in anger inside Minimal. The CLI surface,
-config schema, and findings schema may shift before 1.0; breaking changes
-will be flagged in commits with `!` and called out in the release notes.
+Pre-1.0. Used daily inside [Minimal](https://minimal.tech). The CLI surface and findings schema may shift before 1.0; breaking changes will land with `!` in commit messages and release notes.
+
+If you try it and something's broken, run `skilled-pr doctor` and open an [issue](https://github.com/Demianeen/skilled-pr/issues) with its output.
 
 ## License
 

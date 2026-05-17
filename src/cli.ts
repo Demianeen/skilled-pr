@@ -21,7 +21,7 @@ switch (command) {
   }
   case "doctor": {
     const { doctor } = await import("./doctor");
-    await doctor();
+    await doctor(process.argv.slice(3));
     break;
   }
   case "enable-gate": {
@@ -36,10 +36,11 @@ Usage:
   skilled-pr init                    Set up Skilled PR in this repo
   skilled-pr attest --skill <name>   Post attestation that a review skill ran
                        [--findings <path>]
-  skilled-pr doctor                  Diagnose your local setup. Run this when
+  skilled-pr doctor [--why]          Diagnose your local setup. Run this when
                                      something seems off — checks bun, gh,
                                      auth, repo state, config, hooks, and
-                                     branch protection.
+                                     branch protection. Pass --why (or -v)
+                                     to see why each check matters.
   skilled-pr enable-gate             Add the Skilled PR status checks to your
                                      default branch's protection rules. Additive
                                      — preserves any existing rules.

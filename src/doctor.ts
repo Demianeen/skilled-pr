@@ -25,11 +25,16 @@ export interface CheckResult {
   detail: string;
   /** Copy-pasteable fix shown when status is `warn` or `fail`. */
   fix?: string;
+  /** Educational explanation shown when --why / --verbose / -v is passed. */
+  why?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Pure classifiers
 // ---------------------------------------------------------------------------
+
+const WHY_BUN =
+  "skilled-pr is Bun-native; the cli.ts shebang requires bun to execute. Without bun, `skilled-pr` won't run even if it's on PATH.";
 
 /**
  * Classify `bun --version` output. Bun stdout for `--version` is just the
@@ -42,6 +47,7 @@ export function classifyBunVersion(stdout: string | null): CheckResult {
       status: "fail",
       detail: "not found on PATH",
       fix: "Install bun: curl -fsSL https://bun.sh/install | bash",
+      why: WHY_BUN,
     };
   }
   const version = stdout.trim();
@@ -51,10 +57,14 @@ export function classifyBunVersion(stdout: string | null): CheckResult {
       status: "warn",
       detail: `unexpected version output: ${version}`,
       fix: "Verify bun is properly installed: bun --version",
+      why: WHY_BUN,
     };
   }
-  return { name: "bun installed", status: "pass", detail: version };
+  return { name: "bun installed", status: "pass", detail: version, why: WHY_BUN };
 }
+
+const WHY_GH =
+  "skilled-pr shells out to the GitHub CLI for every API call (status checks, PR comments, branch protection). Lets us reuse your gh auth instead of managing our own tokens.";
 
 /**
  * Classify `gh --version` output. Output is multi-line:
@@ -68,6 +78,7 @@ export function classifyGhVersion(stdout: string | null): CheckResult {
       status: "fail",
       detail: "not found on PATH",
       fix: "Install GitHub CLI: https://cli.github.com/",
+      why: WHY_GH,
     };
   }
   const match = stdout.match(/gh version (\d+\.\d+\.\d+)/);
@@ -77,9 +88,10 @@ export function classifyGhVersion(stdout: string | null): CheckResult {
       status: "warn",
       detail: `unexpected version output: ${stdout.split("\n")[0]}`,
       fix: "Verify gh is properly installed: gh --version",
+      why: WHY_GH,
     };
   }
-  return { name: "gh installed", status: "pass", detail: match[1] };
+  return { name: "gh installed", status: "pass", detail: match[1], why: WHY_GH };
 }
 
 /**
@@ -89,6 +101,9 @@ export function classifyGhVersion(stdout: string | null): CheckResult {
  *
  * On failure, gh exits non-zero and prints to stderr.
  */
+const WHY_GH_AUTH =
+  "Without an active gh login, attest can't post to GitHub. The active account also determines write access — a read-only account gets 404 on writes (which look like 'Not Found' errors).";
+
 export function classifyGhAuth(
   stdout: string | null,
   stderr: string | null,
@@ -100,6 +115,7 @@ export function classifyGhAuth(
       status: "fail",
       detail: "not signed in",
       fix: "gh auth login",
+      why: WHY_GH_AUTH,
     };
   }
   // gh writes the auth status to stderr by default (because it's a status,
@@ -115,10 +131,19 @@ export function classifyGhAuth(
       status: "warn",
       detail: "active account could not be parsed",
       fix: "gh auth status",
+      why: WHY_GH_AUTH,
     };
   }
-  return { name: "gh authenticated", status: "pass", detail: activeMatch[1] };
+  return {
+    name: "gh authenticated",
+    status: "pass",
+    detail: activeMatch[1],
+    why: WHY_GH_AUTH,
+  };
 }
+
+const WHY_REMOTE =
+  "skilled-pr only works with GitHub remotes (origin must be a github.com URL). The owner/repo here is what status checks and PR comments target.";
 
 /**
  * Classify the `git remote get-url origin` output via parseGitHubRemote.
@@ -130,6 +155,7 @@ export function classifyGitHubRemote(remoteUrl: string | null): CheckResult {
       status: "fail",
       detail: "no `origin` remote configured",
       fix: "git remote add origin git@github.com:<owner>/<repo>.git",
+      why: WHY_REMOTE,
     };
   }
   const parsed = parseGitHubRemote(remoteUrl);
@@ -139,14 +165,19 @@ export function classifyGitHubRemote(remoteUrl: string | null): CheckResult {
       status: "fail",
       detail: `origin is not a GitHub URL: ${remoteUrl.trim()}`,
       fix: "skilled-pr supports GitHub only for now",
+      why: WHY_REMOTE,
     };
   }
   return {
     name: "GitHub remote",
     status: "pass",
     detail: `${parsed.owner}/${parsed.repo}`,
+    why: WHY_REMOTE,
   };
 }
+
+const WHY_CONFIG =
+  "Lists which review skills must run before merge (requiredSkills). Without it, the hook has no idea which skill invocations to attest, and the entire plug-and-play loop is silent.";
 
 /**
  * Classify the presence + validity of .skilledpr.jsonc.
@@ -158,6 +189,7 @@ export function classifySkilledPRConfig(rawContent: string | null): CheckResult 
       status: "fail",
       detail: "not found",
       fix: "skilled-pr init",
+      why: WHY_CONFIG,
     };
   }
   try {
@@ -168,12 +200,14 @@ export function classifySkilledPRConfig(rawContent: string | null): CheckResult 
         status: "warn",
         detail: "requiredSkills is empty — hook will never inject reminders",
         fix: "Add at least one skill to requiredSkills in .skilledpr.jsonc",
+        why: WHY_CONFIG,
       };
     }
     return {
       name: ".skilledpr.jsonc",
       status: "pass",
       detail: `requiredSkills: ${JSON.stringify(config.requiredSkills)}`,
+      why: WHY_CONFIG,
     };
   } catch (e) {
     return {
@@ -181,9 +215,13 @@ export function classifySkilledPRConfig(rawContent: string | null): CheckResult 
       status: "fail",
       detail: `parse error: ${(e as Error).message}`,
       fix: "Fix the syntax error or run `skilled-pr init` to regenerate",
+      why: WHY_CONFIG,
     };
   }
 }
+
+const WHY_HOOKS =
+  "PostToolUse matcher 'Skill' catches when Claude autonomously invokes a review skill (the most common path in agentic workflows). UserPromptExpansion catches when you type /skillname directly — that goes through a different event entirely. Without both, the slash-command path silently bypasses attestation and PRs can ship without review.";
 
 /**
  * Classify whether .claude/settings.json has skilled-pr's hooks installed.
@@ -197,6 +235,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       status: "fail",
       detail: ".claude/settings.json not found",
       fix: "skilled-pr init",
+      why: WHY_HOOKS,
     };
   }
   // jsonc-parser does error-recovery (returns best-effort parse) instead of
@@ -209,6 +248,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       status: "fail",
       detail: ".claude/settings.json is not valid JSON",
       fix: "Fix the syntax error or run `skilled-pr init` to merge our hooks in",
+      why: WHY_HOOKS,
     };
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -217,6 +257,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       status: "fail",
       detail: ".claude/settings.json top-level is not an object",
       fix: "Fix the file shape or run `skilled-pr init`",
+      why: WHY_HOOKS,
     };
   }
   const settings = parsed as { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> };
@@ -227,6 +268,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       status: "fail",
       detail: "no hooks block in .claude/settings.json",
       fix: "skilled-pr init",
+      why: WHY_HOOKS,
     };
   }
 
@@ -246,6 +288,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       name: "Claude Code hooks",
       status: "pass",
       detail: "PostToolUse + UserPromptExpansion installed",
+      why: WHY_HOOKS,
     };
   }
   if (!postToolUse && !userPrompt) {
@@ -254,6 +297,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       status: "fail",
       detail: "neither hook is installed",
       fix: "skilled-pr init",
+      why: WHY_HOOKS,
     };
   }
   // Partial install — one but not the other. Real users can hit this if
@@ -266,8 +310,12 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
     status: "warn",
     detail: `missing: ${missing} (slash-command path won't trigger attestation)`,
     fix: "skilled-pr init  (idempotent, will add the missing hook)",
+    why: WHY_HOOKS,
   };
 }
+
+const WHY_BRANCH_PROTECTION =
+  "GitHub status checks post on every attest, but only branch protection actually GATES the merge button. Without 'Skilled PR' in required checks, the green check is decorative — PRs can merge with failing reviews. `skilled-pr enable-gate` automates this.";
 
 /**
  * Classify a `gh api repos/.../branches/<branch>/protection` response. The
@@ -288,7 +336,8 @@ export function classifyBranchProtection(
       name: "Branch protection",
       status: "warn",
       detail: "no protection rules on default branch",
-      fix: "skilled-pr enable-gate  (coming soon — see README for manual steps)",
+      fix: "skilled-pr enable-gate",
+      why: WHY_BRANCH_PROTECTION,
     };
   }
   let parsed: unknown;
@@ -300,6 +349,7 @@ export function classifyBranchProtection(
       status: "warn",
       detail: "could not parse gh api response",
       fix: "gh api repos/<owner>/<repo>/branches/<branch>/protection",
+      why: WHY_BRANCH_PROTECTION,
     };
   }
   const required =
@@ -311,13 +361,15 @@ export function classifyBranchProtection(
       name: "Branch protection",
       status: "warn",
       detail: `protection exists but no required check matches "${statusName} / *"`,
-      fix: "Add the Skilled PR check via Settings → Branches → Branch protection rules",
+      fix: "skilled-pr enable-gate",
+      why: WHY_BRANCH_PROTECTION,
     };
   }
   return {
     name: "Branch protection",
     status: "pass",
     detail: `${skilledChecks.length} required check(s): ${skilledChecks.join(", ")}`,
+    why: WHY_BRANCH_PROTECTION,
   };
 }
 
@@ -341,26 +393,64 @@ const COLOR: Record<CheckStatus, string> = {
 const RESET = "\x1b[0m";
 
 /**
- * Format a single check as one or two output lines (the fix line is
- * indented under the check line when present).
+ * Format a single check as one to three output lines:
+ *   - the check headline (icon + name + detail)
+ *   - the fix line (if status is warn/fail and a fix is set)
+ *   - the why line (if verbose=true and a why is set), wrapped at ~72 cols
+ *     for readable terminal output.
  */
-export function formatCheck(result: CheckResult, useColor = true): string {
+export function formatCheck(
+  result: CheckResult,
+  useColor = true,
+  verbose = false,
+): string {
   const icon = useColor ? `${COLOR[result.status]}${ICON[result.status]}${RESET}` : ICON[result.status];
   // Pad the name column for alignment. 22 chars matches our longest name
   // ("Claude Code hooks" = 17, ".skilledpr.jsonc" = 16, plus buffer).
   const name = result.name.padEnd(22, " ");
-  const head = `${icon} ${name} ${result.detail}`;
+  const lines = [`${icon} ${name} ${result.detail}`];
   if (result.fix && (result.status === "warn" || result.status === "fail")) {
-    return `${head}\n  Fix: ${result.fix}`;
+    lines.push(`  Fix: ${result.fix}`);
   }
-  return head;
+  if (verbose && result.why) {
+    lines.push(`  Why: ${wrap(result.why, 72, "       ")}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Word-wrap `text` at `width` columns, indenting continuation lines with
+ * `indent`. Used for the `Why:` paragraph so long explanations stay readable.
+ */
+function wrap(text: string, width: number, indent: string): string {
+  const words = text.split(/\s+/);
+  const out: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (line.length === 0) {
+      line = word;
+    } else if (line.length + 1 + word.length <= width) {
+      line += " " + word;
+    } else {
+      out.push(line);
+      line = word;
+    }
+  }
+  if (line) out.push(line);
+  return out.join("\n" + indent);
 }
 
 /**
  * Compose the full doctor output. Includes a one-line summary at the end.
+ * When verbose=false, also appends a tip mentioning the --why flag so users
+ * discover the option without reading --help.
  */
-export function formatDoctorReport(results: CheckResult[], useColor = true): string {
-  const lines = results.map((r) => formatCheck(r, useColor));
+export function formatDoctorReport(
+  results: CheckResult[],
+  useColor = true,
+  verbose = false,
+): string {
+  const lines = results.map((r) => formatCheck(r, useColor, verbose));
   const pass = results.filter((r) => r.status === "pass").length;
   const warn = results.filter((r) => r.status === "warn").length;
   const fail = results.filter((r) => r.status === "fail").length;
@@ -369,6 +459,10 @@ export function formatDoctorReport(results: CheckResult[], useColor = true): str
     lines.push(`All checks passed (${pass}/${results.length}).`);
   } else {
     lines.push(`${pass}/${results.length} pass, ${warn} warn, ${fail} fail.`);
+  }
+  if (!verbose) {
+    lines.push("");
+    lines.push("Tip: run `skilled-pr doctor --why` to see what each check is for.");
   }
   return lines.join("\n");
 }
@@ -397,7 +491,12 @@ async function readFileOrNull(path: string): Promise<string | null> {
   return file.text();
 }
 
-export async function doctor() {
+export async function doctor(args: string[] = []) {
+  // --why / --verbose / -v all enable the educational "Why this matters"
+  // line under each check. Without any of them, the output stays compact
+  // and the report footer mentions the flag so users discover it.
+  const verbose = args.includes("--why") || args.includes("--verbose") || args.includes("-v");
+
   const results: CheckResult[] = [];
 
   // 1. bun
@@ -476,8 +575,8 @@ export async function doctor() {
     });
   }
 
-  const useColor = Bun.env.NO_COLOR === undefined && process.stdout.isTTY !== false;
-  console.log(formatDoctorReport(results, useColor));
+  const useColor = Bun.env.NO_COLOR === undefined && process.stdout.isTTY === true;
+  console.log(formatDoctorReport(results, useColor, verbose));
 
   // Exit non-zero if any check failed (warns are OK — they're advisory).
   const anyFail = results.some((r) => r.status === "fail");

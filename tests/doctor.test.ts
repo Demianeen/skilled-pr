@@ -383,3 +383,158 @@ describe("formatDoctorReport", () => {
     expect(out).toContain("0/0");
   });
 });
+
+// ---------------------------------------------------------------------------
+// --why / verbose mode
+// ---------------------------------------------------------------------------
+
+describe("classifiers populate `why` for every status branch", () => {
+  // Every classifier exposes an educational `why` field. Verified on a
+  // representative pass + fail/warn case per classifier so we don't ship a
+  // branch without it.
+
+  test("classifyBunVersion has why on pass + fail", () => {
+    expect(classifyBunVersion("1.3.10").why).toBeDefined();
+    expect(classifyBunVersion(null).why).toBeDefined();
+  });
+
+  test("classifyGhVersion has why on pass + fail", () => {
+    expect(classifyGhVersion("gh version 2.45.0 (2024)").why).toBeDefined();
+    expect(classifyGhVersion(null).why).toBeDefined();
+  });
+
+  test("classifyGhAuth has why on pass + fail + warn", () => {
+    const pass = classifyGhAuth("", "✓ Logged in to github.com account x", 0);
+    expect(pass.why).toBeDefined();
+    expect(classifyGhAuth(null, "not signed in", 1).why).toBeDefined();
+    expect(classifyGhAuth("", "ambiguous", 0).why).toBeDefined();
+  });
+
+  test("classifyGitHubRemote has why on pass + fail", () => {
+    expect(classifyGitHubRemote("git@github.com:o/r.git").why).toBeDefined();
+    expect(classifyGitHubRemote(null).why).toBeDefined();
+    expect(classifyGitHubRemote("https://gitlab.com/x/y").why).toBeDefined();
+  });
+
+  test("classifySkilledPRConfig has why on pass + warn + fail", () => {
+    expect(classifySkilledPRConfig('{ "requiredSkills": ["a"] }').why).toBeDefined();
+    expect(classifySkilledPRConfig('{ "requiredSkills": [] }').why).toBeDefined();
+    expect(classifySkilledPRConfig(null).why).toBeDefined();
+    expect(classifySkilledPRConfig("{ broken }").why).toBeDefined();
+  });
+
+  test("classifyClaudeHooks has why on pass + warn + fail variants", () => {
+    const both = JSON.stringify({
+      hooks: {
+        PostToolUse: [{ matcher: "Skill", hooks: [{ type: "command", command: "skilled-pr hook" }] }],
+        UserPromptExpansion: [{ matcher: "", hooks: [{ type: "command", command: "skilled-pr hook" }] }],
+      },
+    });
+    expect(classifyClaudeHooks(both).why).toBeDefined();
+    expect(classifyClaudeHooks(null).why).toBeDefined();
+    expect(classifyClaudeHooks("{ broken }").why).toBeDefined();
+    const partial = JSON.stringify({
+      hooks: {
+        PostToolUse: [{ matcher: "Skill", hooks: [{ type: "command", command: "skilled-pr hook" }] }],
+      },
+    });
+    expect(classifyClaudeHooks(partial).why).toBeDefined();
+  });
+
+  test("classifyBranchProtection has why on pass + warn", () => {
+    const protectedResponse = JSON.stringify({
+      required_status_checks: { contexts: ["Skilled PR / review"] },
+    });
+    expect(classifyBranchProtection(protectedResponse, 0, "Skilled PR").why).toBeDefined();
+    expect(classifyBranchProtection(null, 1, "Skilled PR").why).toBeDefined();
+  });
+});
+
+describe("formatCheck verbose mode", () => {
+  const sampleResult = {
+    name: "test",
+    status: "pass" as const,
+    detail: "ok",
+    why: "this is why it matters",
+  };
+
+  test("verbose=false omits the Why line", () => {
+    const out = formatCheck(sampleResult, false, false);
+    expect(out).not.toContain("Why:");
+    expect(out).not.toContain("why it matters");
+  });
+
+  test("verbose=true includes the Why line", () => {
+    const out = formatCheck(sampleResult, false, true);
+    expect(out).toContain("Why:");
+    expect(out).toContain("why it matters");
+  });
+
+  test("verbose defaults to false (backwards compatible)", () => {
+    // Old call sites that didn't pass verbose should still work and stay quiet.
+    const out = formatCheck(sampleResult, false);
+    expect(out).not.toContain("Why:");
+  });
+
+  test("verbose=true on a check without a why field is a no-op (graceful)", () => {
+    const noWhy = { name: "x", status: "pass" as const, detail: "ok" };
+    const out = formatCheck(noWhy, false, true);
+    expect(out).not.toContain("Why:");
+    expect(out).toContain("ok");
+  });
+
+  test("verbose=true with fail status shows both Fix and Why", () => {
+    const out = formatCheck(
+      { name: "x", status: "fail", detail: "broken", fix: "do this", why: "matters because Y" },
+      false,
+      true,
+    );
+    expect(out).toContain("Fix: do this");
+    expect(out).toContain("Why: matters because Y");
+  });
+
+  test("wraps long why text instead of one-lining", () => {
+    const longWhy =
+      "this is a very long explanation that should definitely be wrapped at around seventy two columns because terminal output that doesn't wrap is hard to read and you'd hate it";
+    const out = formatCheck(
+      { name: "x", status: "pass", detail: "ok", why: longWhy },
+      false,
+      true,
+    );
+    // The wrapper inserts newlines + indent
+    const whyBlock = out.split("Why: ")[1];
+    expect(whyBlock).toContain("\n       "); // 7-space continuation indent
+  });
+});
+
+describe("formatDoctorReport tip line", () => {
+  const results = [
+    { name: "a", status: "pass" as const, detail: "ok", why: "matters" },
+    { name: "b", status: "pass" as const, detail: "ok", why: "matters" },
+  ];
+
+  test("verbose=false includes the --why tip (discoverability)", () => {
+    const out = formatDoctorReport(results, false, false);
+    expect(out).toContain("skilled-pr doctor --why");
+    expect(out).toContain("what each check is for");
+  });
+
+  test("verbose=true omits the tip (user already knows)", () => {
+    const out = formatDoctorReport(results, false, true);
+    expect(out).not.toContain("--why");
+    expect(out).not.toContain("Tip:");
+  });
+
+  test("verbose defaults to false (backwards compatible)", () => {
+    const out = formatDoctorReport(results, false);
+    expect(out).toContain("skilled-pr doctor --why");
+  });
+
+  test("tip appears below the summary line", () => {
+    const out = formatDoctorReport(results, false, false);
+    const summaryIdx = out.indexOf("All checks passed");
+    const tipIdx = out.indexOf("Tip:");
+    expect(summaryIdx).toBeGreaterThan(-1);
+    expect(tipIdx).toBeGreaterThan(summaryIdx);
+  });
+});

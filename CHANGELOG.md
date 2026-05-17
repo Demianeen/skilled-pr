@@ -5,6 +5,19 @@ All notable changes to `skilled-pr` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/Demianeen/skilled-pr/compare/v0.1.0...v0.2.0) (2026-05-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* the `sha: "head" | "pushed"` field is removed.
+
+### Features
+
+* add skilled-pr attest and init commands ([#1](https://github.com/Demianeen/skilled-pr/issues/1)) ([4102eca](https://github.com/Demianeen/skilled-pr/commit/4102ecafe4cfb15dfecd5eed37da23d4e8952f90))
+* plug-and-play attestation via Claude Code hooks ([#2](https://github.com/Demianeen/skilled-pr/issues/2)) ([c8d6c4c](https://github.com/Demianeen/skilled-pr/commit/c8d6c4c606699a193c77f136f2c62efcb209c564))
+* release CI, doctor, enable-gate, artifact summaries, docs ([#3](https://github.com/Demianeen/skilled-pr/issues/3)) ([9119cee](https://github.com/Demianeen/skilled-pr/commit/9119cee75f504ab82897a26ff1048737890d3b62))
+
 ## [Unreleased]
 
 ### Added

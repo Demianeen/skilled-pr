@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
-  classifyBunVersion,
+  classifyNodeVersion,
   classifyGhVersion,
   classifyGhAuth,
   classifyGitHubRemote,
@@ -12,27 +12,36 @@ import {
 } from "../src/doctor";
 
 // ---------------------------------------------------------------------------
-// classifyBunVersion
+// classifyNodeVersion
 // ---------------------------------------------------------------------------
 
-describe("classifyBunVersion", () => {
+describe("classifyNodeVersion", () => {
   test("null stdout → fail with install hint", () => {
-    const r = classifyBunVersion(null);
+    const r = classifyNodeVersion(null);
     expect(r.status).toBe("fail");
     expect(r.detail).toBe("not found on PATH");
-    expect(r.fix).toContain("bun.sh/install");
+    expect(r.fix).toContain("nodejs.org");
   });
 
-  test("normal version output → pass with version", () => {
-    const r = classifyBunVersion("1.3.10\n");
+  test("normal version output (v-prefixed) → pass with version", () => {
+    // `node --version` prints "vX.Y.Z\n" - verify we keep the `v` in detail.
+    const r = classifyNodeVersion("v20.11.0\n");
     expect(r.status).toBe("pass");
-    expect(r.detail).toBe("1.3.10");
+    expect(r.detail).toBe("v20.11.0");
+  });
+
+  test("bare semver (forward-compat) → pass", () => {
+    // Defensive: if a Node-compatible runtime ever drops the `v` prefix,
+    // we still accept it.
+    const r = classifyNodeVersion("20.11.0\n");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe("20.11.0");
   });
 
   test("unexpected output → warn", () => {
-    const r = classifyBunVersion("not-a-version\n");
+    const r = classifyNodeVersion("not-a-version\n");
     expect(r.status).toBe("warn");
-    expect(r.fix).toContain("bun --version");
+    expect(r.fix).toContain("node --version");
   });
 });
 
@@ -393,9 +402,9 @@ describe("classifiers populate `why` for every status branch", () => {
   // representative pass + fail/warn case per classifier so we don't ship a
   // branch without it.
 
-  test("classifyBunVersion has why on pass + fail", () => {
-    expect(classifyBunVersion("1.3.10").why).toBeDefined();
-    expect(classifyBunVersion(null).why).toBeDefined();
+  test("classifyNodeVersion has why on pass + fail", () => {
+    expect(classifyNodeVersion("v20.11.0").why).toBeDefined();
+    expect(classifyNodeVersion(null).why).toBeDefined();
   });
 
   test("classifyGhVersion has why on pass + fail", () => {

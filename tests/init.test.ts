@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mergeSkilledPRHooks, type ClaudeSettings } from "../src/init";
 
 const SKILLED_PR_CMD = "skilled-pr hook";

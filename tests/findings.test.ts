@@ -7,6 +7,8 @@ import {
   findingsExceedingThreshold,
   countBySeverity,
   buildStatusDescription,
+  formatArtifactComment,
+  extractArtifactSkillName,
   type Finding,
 } from "../src/findings";
 
@@ -306,5 +308,130 @@ describe("buildStatusDescription", () => {
       ...Array.from({ length: 10 }, () => fp("info")),
     ];
     expect(buildStatusDescription("a-skill-with-a-long-name:review", findings).length).toBeLessThanOrEqual(140);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatArtifactComment + extractArtifactSkillName
+// ---------------------------------------------------------------------------
+
+describe("formatArtifactComment", () => {
+  const SHA = "aacd0dd1234567890abcdef0";
+
+  test("zero findings → ✅ icon, 'No issues found' body", () => {
+    const out = formatArtifactComment("review", SHA, [], "error");
+    expect(out).toContain("✅");
+    expect(out).toContain("Findings:** 0");
+    expect(out).toContain("No issues found");
+  });
+
+  test("includes short SHA (7 chars) in the header, not the full one", () => {
+    const out = formatArtifactComment("review", SHA, [], "error");
+    expect(out).toContain("`aacd0dd`");
+    expect(out).not.toContain("aacd0dd1234"); // full SHA shouldn't leak
+  });
+
+  test("includes the skill name verbatim", () => {
+    const out = formatArtifactComment("coderabbit:review", SHA, [], "error");
+    expect(out).toContain("`coderabbit:review`");
+  });
+
+  test("includes the artifact marker at end of body", () => {
+    const out = formatArtifactComment("review", SHA, [], "error");
+    expect(out).toMatch(/<!-- skilled-pr:artifact:review -->\s*$/);
+  });
+
+  test("findings within failOn threshold → ⚠️ icon, 'passing the gate' message", () => {
+    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
+    expect(out).toContain("⚠️");
+    expect(out).toContain("2 🔵 info");
+    expect(out).toContain("none reach the");
+    expect(out).toContain("passing");
+    expect(out).not.toContain("blocked");
+  });
+
+  test("findings exceed failOn threshold → 🚫 icon, blocked message", () => {
+    const out = formatArtifactComment("review", SHA, [fp("error"), fp("info")], "error");
+    expect(out).toContain("🚫");
+    expect(out).toContain("blocked");
+    expect(out).toContain("failOn: error");
+    expect(out).toContain("1 🔴 error");
+    expect(out).toContain("1 🔵 info");
+  });
+
+  test("multiple blocking findings → pluralizes correctly", () => {
+    const out = formatArtifactComment(
+      "review",
+      SHA,
+      [fp("error"), fp("error"), fp("error")],
+      "error",
+    );
+    expect(out).toContain("3 findings have severity");
+  });
+
+  test("single blocking finding → uses 'has' (singular)", () => {
+    const out = formatArtifactComment("review", SHA, [fp("error")], "error");
+    expect(out).toContain("1 finding has severity");
+  });
+
+  test("severity breakdown omits zero-count buckets", () => {
+    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
+    expect(out).toContain("2 🔵 info");
+    expect(out).not.toContain("🔴 error"); // shouldn't list 0-count error
+    expect(out).not.toContain("🟡 warning"); // shouldn't list 0-count warning
+  });
+
+  test("failOn: warning escalates warnings to blocking", () => {
+    const out = formatArtifactComment("review", SHA, [fp("warning")], "warning");
+    expect(out).toContain("🚫");
+    expect(out).toContain("blocked");
+    expect(out).toContain("failOn: warning");
+  });
+
+  test("failOn: none never blocks", () => {
+    const out = formatArtifactComment("review", SHA, [fp("error"), fp("error")], "none");
+    expect(out).not.toContain("🚫");
+    expect(out).not.toContain("blocked");
+    // With failOn:none, the gate is passing even with errors
+    expect(out).toContain("passing");
+  });
+
+  test("body has guidance to inline comments when findings exist", () => {
+    const out = formatArtifactComment("review", SHA, [fp("info")], "error");
+    expect(out).toContain("inline comments");
+  });
+
+  test("body does NOT mention inline comments when zero findings", () => {
+    const out = formatArtifactComment("review", SHA, [], "error");
+    expect(out).not.toContain("inline comments");
+  });
+});
+
+describe("extractArtifactSkillName", () => {
+  test("extracts skill name from a valid artifact marker", () => {
+    expect(extractArtifactSkillName("body\n<!-- skilled-pr:artifact:review -->")).toBe("review");
+  });
+
+  test("preserves plugin-namespaced skill names with colons", () => {
+    expect(extractArtifactSkillName("<!-- skilled-pr:artifact:coderabbit:review -->")).toBe(
+      "coderabbit:review",
+    );
+  });
+
+  test("returns null for a comment without any marker", () => {
+    expect(extractArtifactSkillName("just a normal comment")).toBeNull();
+  });
+
+  test("returns null for a fingerprint marker (different prefix, no collision)", () => {
+    expect(extractArtifactSkillName("<!-- skilled-pr:fp:abc123def456 -->")).toBeNull();
+  });
+
+  test("returns null for malformed marker", () => {
+    expect(extractArtifactSkillName("<!-- skilled-pr:other:foo -->")).toBeNull();
+  });
+
+  test("round-trips through formatArtifactComment", () => {
+    const body = formatArtifactComment("plugin:my-skill", "abc1234", [], "error");
+    expect(extractArtifactSkillName(body)).toBe("plugin:my-skill");
   });
 });

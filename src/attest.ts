@@ -1,5 +1,10 @@
 import { loadConfig, type SkilledPRConfig } from "./config";
-import { parseGitHubRemote, buildStatusContext, type GitHubRemote } from "./github";
+import {
+  parseGitHubRemote,
+  buildStatusContext,
+  classifyGhError,
+  type GitHubRemote,
+} from "./github";
 import { parseAttestArgs } from "./args";
 import {
   parseFindings,
@@ -7,6 +12,8 @@ import {
   extractFingerprint,
   findingsExceedingThreshold,
   buildStatusDescription,
+  formatArtifactComment,
+  extractArtifactSkillName,
   type Finding,
 } from "./findings";
 
@@ -73,8 +80,26 @@ export async function attest(args: string[]) {
       );
     } else {
       const result = postFindingsAsComments(remote, prNumber, sha, findings, skillName);
+      // Always post (or update) the per-skill artifact summary comment, even
+      // when there are zero findings. That's the whole point — the artifact is
+      // the audit trail that a review actually ran. Failures here warn-only —
+      // the artifact is evidence, not the gate.
+      const artifactResult = postOrUpdateArtifactComment(
+        remote,
+        prNumber,
+        sha,
+        findings,
+        skillName,
+        config.failOn,
+      );
+      const artifactNote =
+        artifactResult === "created"
+          ? "artifact comment created"
+          : artifactResult === "updated"
+            ? "artifact updated"
+            : "artifact post failed";
       console.log(
-        `Skilled PR: posted ${result.new} new, skipped ${result.skipped} existing finding(s) on PR #${prNumber}.`,
+        `Skilled PR: posted ${result.new} new, skipped ${result.skipped} existing finding(s) on PR #${prNumber} (${artifactNote}).`,
       );
     }
   }
@@ -208,8 +233,9 @@ function postFindingsAsComments(
 
     if (proc.exitCode !== 0) {
       const stderr = proc.stderr.toString();
+      const classified = classifyGhError(stderr, { operation: "post-comment", remote });
       console.error(
-        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}\n${stderr}`,
+        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}.\n\n${classified.message}`,
       );
       process.exit(1);
     }
@@ -217,6 +243,99 @@ function postFindingsAsComments(
   }
 
   return { new: newCount, skipped };
+}
+
+/**
+ * Find the existing artifact comment for a given skill on a PR, if any.
+ * Artifact comments are top-level PR comments (issues endpoint, not pulls),
+ * tagged with `<!-- skilled-pr:artifact:<skill-name> -->`. Returns the
+ * GitHub comment id (for PATCH), or null if no artifact exists yet.
+ */
+function findExistingArtifactComment(
+  remote: GitHubRemote,
+  prNumber: number,
+  skillName: string,
+): number | null {
+  const proc = Bun.spawnSync([
+    "gh", "api",
+    `repos/${remote.owner}/${remote.repo}/issues/${prNumber}/comments`,
+    "--paginate",
+    "--slurp",
+  ]);
+  if (proc.exitCode !== 0) return null;
+  try {
+    // --paginate --slurp wraps each page's array into an outer array.
+    const pages = JSON.parse(proc.stdout.toString()) as Array<Array<{ id: number; body: string }>>;
+    for (const page of pages) {
+      for (const c of page) {
+        if (extractArtifactSkillName(c.body) === skillName) return c.id;
+      }
+    }
+  } catch {
+    // malformed JSON — treat as no existing artifact, will POST a new one
+  }
+  return null;
+}
+
+/**
+ * Post or update the per-skill artifact summary comment. Returns the action
+ * taken — used by the caller for log output. Never throws / exits; the
+ * artifact is evidence, not a gate.
+ */
+function postOrUpdateArtifactComment(
+  remote: GitHubRemote,
+  prNumber: number,
+  sha: string,
+  findings: Finding[],
+  skillName: string,
+  failOn: SkilledPRConfig["failOn"],
+): "created" | "updated" | "failed" {
+  const body = formatArtifactComment(skillName, sha, findings, failOn);
+  const existingId = findExistingArtifactComment(remote, prNumber, skillName);
+
+  const payload = JSON.stringify({ body });
+
+  if (existingId !== null) {
+    // Update existing — PATCH /issues/comments/<id>
+    const proc = Bun.spawnSync(
+      [
+        "gh", "api",
+        `repos/${remote.owner}/${remote.repo}/issues/comments/${existingId}`,
+        "-X", "PATCH",
+        "--input", "-",
+      ],
+      { stdin: Buffer.from(payload) },
+    );
+    if (proc.exitCode !== 0) {
+      const classified = classifyGhError(proc.stderr.toString(), {
+        operation: "edit-comment",
+        remote,
+      });
+      console.warn(`Skilled PR: artifact comment update failed.\n\n${classified.message}`);
+      return "failed";
+    }
+    return "updated";
+  }
+
+  // Create new — POST /issues/<n>/comments
+  const proc = Bun.spawnSync(
+    [
+      "gh", "api",
+      `repos/${remote.owner}/${remote.repo}/issues/${prNumber}/comments`,
+      "-X", "POST",
+      "--input", "-",
+    ],
+    { stdin: Buffer.from(payload) },
+  );
+  if (proc.exitCode !== 0) {
+    const classified = classifyGhError(proc.stderr.toString(), {
+      operation: "post-comment",
+      remote,
+    });
+    console.warn(`Skilled PR: artifact comment post failed.\n\n${classified.message}`);
+    return "failed";
+  }
+  return "created";
 }
 
 // ---------------------------------------------------------------------------
@@ -300,11 +419,8 @@ function postStatus(
 
   if (proc.exitCode !== 0) {
     const stderr = proc.stderr.toString();
-    if (stderr.includes("auth") || stderr.includes("login")) {
-      console.error("Skilled PR: gh is not authenticated. Run 'gh auth login' first.");
-    } else {
-      console.error(`Skilled PR: failed to post status.\n${stderr}`);
-    }
+    const classified = classifyGhError(stderr, { operation: "post-status", remote });
+    console.error(classified.message);
     process.exit(1);
   }
 }

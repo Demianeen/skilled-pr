@@ -1,0 +1,59 @@
+name: release-please
+
+# Workflow security note (for reviewers):
+# This workflow does NOT interpolate any github.event.*.title / body / message
+# fields into run: commands. The only ${{ }} expressions are:
+#   - steps.release.outputs.release_created (boolean from googleapis/release-please-action)
+#   - secrets.GITHUB_TOKEN (write-scoped, used by the action only)
+#   - secrets.NPM_TOKEN (consumed via env: NODE_AUTH_TOKEN, never echoed)
+# No untrusted input flows into a shell.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: open or update the release PR.
+      # When that PR merges, release-please tags the release and sets
+      # `release_created: true` on this same workflow run.
+      - uses: googleapis/release-please-action@v4
+        id: release
+
+      # Steps below only run when a release was actually created
+      # (i.e. when this run is the post-merge of the release PR).
+      # On every other push to main, release-please just updates the
+      # open release PR and exits.
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ steps.release.outputs.release_created }}
+
+      - run: bun install --frozen-lockfile
+        if: ${{ steps.release.outputs.release_created }}
+
+      - run: bun test
+        if: ${{ steps.release.outputs.release_created }}
+
+      # Switch to npm for publish: bun publish is newer; npm publish has
+      # rock-solid NODE_AUTH_TOKEN handling. setup-node configures auth
+      # against the public npm registry.
+      - uses: actions/setup-node@v4
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm publish --access public
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

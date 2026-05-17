@@ -3,10 +3,10 @@
 > **AI code review that actually blocks the merge.** Plug a Claude Code review skill into your GitHub PR gate without writing any CI glue.
 
 ```bash
-bun add -g skilled-pr             # install
+npm i -g skilled-pr                # install (or `pnpm add -g skilled-pr`)
 cd your-repo
-skilled-pr init                   # writes .skilledpr.jsonc + Claude Code hooks
-skilled-pr enable-gate            # adds the status check to branch protection
+skilled-pr init                    # writes .skilledpr.jsonc + Claude Code hooks
+skilled-pr enable-gate             # adds the status check to branch protection
 # Open a PR, invoke /review in Claude Code, watch the gate light up green.
 ```
 
@@ -60,10 +60,10 @@ The model asks you, you say yes, it pushes, attest re-runs, status posts. No hum
 ## Install
 
 ```bash
-bun add -g skilled-pr
+npm i -g skilled-pr        # or `pnpm add -g skilled-pr`
 ```
 
-Requires [Bun](https://bun.sh) (the CLI is Bun-native; pure Node won't work — see [TROUBLESHOOTING](./docs/TROUBLESHOOTING.md) if you hit shell PATH issues, especially on fish). Also requires [`gh`](https://cli.github.com) authenticated with `repo` scope.
+Requires [Node.js 22+](https://nodejs.org/) (the current LTS — older versions are out of support) and [`gh`](https://cli.github.com) authenticated with `repo` scope. If you hit shell PATH issues after install (especially on fish), see [TROUBLESHOOTING](./docs/TROUBLESHOOTING.md).
 
 ## Setup
 

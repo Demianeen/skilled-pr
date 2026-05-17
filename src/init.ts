@@ -75,7 +75,7 @@ function ensureSkilledPRHook(
  * filesystem; Windows's equivalent (MoveFileExW with MOVEFILE_REPLACE_EXISTING)
  * is what Node's renameSync wraps.
  */
-function writeFileWithMkdir(path: string, contents: string) {
+export function writeFileWithMkdir(path: string, contents: string) {
   const dir = dirname(path);
   if (dir && dir !== "." && !existsSync(dir)) {
     mkdirSync(dir, { recursive: true });

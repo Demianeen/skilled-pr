@@ -66,7 +66,7 @@ const STDIN_IDLE_TIMEOUT_MS = 5_000;
  *
  * `stream` is parameterised so unit tests can pass a stub Readable.
  */
-function readStdin(
+export function readStdin(
   stream: NodeJS.ReadableStream = process.stdin,
   maxBytes = MAX_STDIN_BYTES,
   idleTimeoutMs = STDIN_IDLE_TIMEOUT_MS,

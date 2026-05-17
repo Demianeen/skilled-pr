@@ -1,5 +1,8 @@
-import { describe, expect, test } from "vitest";
-import { mergeSkilledPRHooks, type ClaudeSettings } from "../src/init";
+import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mergeSkilledPRHooks, writeFileWithMkdir, type ClaudeSettings } from "../src/init";
 
 const SKILLED_PR_CMD = "skilled-pr hook";
 
@@ -121,5 +124,100 @@ describe("mergeSkilledPRHooks", () => {
     };
     const out = mergeSkilledPRHooks(existing);
     expect(out.hooks!.PostToolUse).not.toBe(existing.hooks!.PostToolUse);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeFileWithMkdir
+//
+// Critical migration helper: replaces Bun.write's auto-mkdir behaviour for
+// `.claude/settings.json` (the .claude/ dir doesn't exist in a fresh repo).
+// Also atomic via tmp + rename so a Ctrl-C mid-write doesn't corrupt the
+// user's settings.json on subsequent runs.
+// ---------------------------------------------------------------------------
+
+describe("writeFileWithMkdir", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-init-test-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("writes when parent directory exists", () => {
+    const target = join(tmp, "file.txt");
+    writeFileWithMkdir(target, "hello");
+    expect(readFileSync(target, "utf8")).toBe("hello");
+  });
+
+  test("creates missing parent directory (single level)", () => {
+    // Replicates the fresh-repo `.claude/settings.json` case.
+    const target = join(tmp, ".claude", "settings.json");
+    writeFileWithMkdir(target, "{}");
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe("{}");
+  });
+
+  test("creates deeply nested directories recursively", () => {
+    const target = join(tmp, "a", "b", "c", "deep.txt");
+    writeFileWithMkdir(target, "x");
+    expect(readFileSync(target, "utf8")).toBe("x");
+  });
+
+  test("overwrites an existing file", () => {
+    const target = join(tmp, "f.txt");
+    writeFileWithMkdir(target, "first");
+    writeFileWithMkdir(target, "second");
+    expect(readFileSync(target, "utf8")).toBe("second");
+  });
+
+  test("does not leave a .tmp file behind on success (atomic rename completed)", () => {
+    // Atomic write pattern: write to <path>.tmp, then rename. After a
+    // successful call only the final path exists, no stray .tmp.
+    const target = join(tmp, "settings.json");
+    writeFileWithMkdir(target, "{}");
+    const entries = readdirSync(tmp);
+    expect(entries).toContain("settings.json");
+    expect(entries.find((e) => e.endsWith(".tmp"))).toBeUndefined();
+  });
+
+  test("dirname === '.' (bare filename) does not call mkdir", () => {
+    // dirname returns "." for paths with no directory component. The
+    // helper must skip the mkdir for this case, otherwise it would
+    // try to mkdir(".", recursive:true) which is a no-op but signals
+    // brittle assumptions about the input shape.
+    const cwd = process.cwd();
+    process.chdir(tmp);
+    try {
+      writeFileWithMkdir("bare.txt", "hello");
+      expect(readFileSync(join(tmp, "bare.txt"), "utf8")).toBe("hello");
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  test("preserves a pre-existing file at the destination directory (mkdir is idempotent)", () => {
+    const sibling = join(tmp, "subdir", "sibling.txt");
+    writeFileWithMkdir(sibling, "first");
+    // Second write to a different file in the same dir should not blow away
+    // the first one. Catches a bug where mkdirSync(..., {recursive:false})
+    // would throw on existing dirs.
+    const second = join(tmp, "subdir", "second.txt");
+    writeFileWithMkdir(second, "another");
+    expect(readFileSync(sibling, "utf8")).toBe("first");
+    expect(readFileSync(second, "utf8")).toBe("another");
+  });
+
+  test("rejects a literal .tmp shadow file left by a prior crash (renameSync overwrites cleanly)", () => {
+    // If a prior crashed run left behind <path>.tmp, the next successful
+    // write should overwrite it during the atomic-rename step. renameSync
+    // is replace-by-default on POSIX and Windows, so the shadow file
+    // shouldn't survive.
+    const target = join(tmp, "settings.json");
+    writeFileSync(target + ".tmp", "stale partial write");
+    writeFileWithMkdir(target, "fresh content");
+    expect(readFileSync(target, "utf8")).toBe("fresh content");
+    expect(existsSync(target + ".tmp")).toBe(false);
   });
 });

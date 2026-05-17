@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { run } from "./proc";
 import { loadConfig, type SkilledPRConfig } from "./config";
 import {
   parseGitHubRemote,
@@ -18,36 +18,6 @@ import {
   extractArtifactSkillName,
   type Finding,
 } from "./findings";
-
-// ---------------------------------------------------------------------------
-// Process helper
-// ---------------------------------------------------------------------------
-
-/**
- * Run a command synchronously, returning normalized stdout/stderr/exit code.
- * Node's `spawnSync` takes (command, args[], options), unlike Bun's which
- * takes a single argv array. With `encoding: "utf8"` we get strings back
- * instead of Buffers. `status` can be null when the process was killed by
- * a signal — treat that as -1 to keep the contract simple for callers.
- *
- * Stdin is piped via the `input` option when supplied (matches Bun's
- * `{ stdin: Buffer.from(...) }` shape we used to use).
- */
-function run(args: string[], stdin?: string): {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-} {
-  const proc = spawnSync(args[0], args.slice(1), {
-    encoding: "utf8",
-    input: stdin,
-  });
-  return {
-    stdout: proc.stdout ?? "",
-    stderr: proc.stderr ?? "",
-    exitCode: proc.status ?? -1,
-  };
-}
 
 type StatusState = "success" | "failure";
 

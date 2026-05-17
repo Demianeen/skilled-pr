@@ -16,7 +16,7 @@
 // clobber any of that. GitHub's `POST .../required_status_checks/contexts`
 // endpoint is purpose-built for this.
 
-import { spawnSync } from "node:child_process";
+import { run } from "./proc";
 import { loadConfig } from "./config";
 import {
   parseGitHubRemote,
@@ -85,24 +85,9 @@ export function buildInitialProtectionPayload(contexts: ReadonlyArray<string>): 
 // I/O entry point
 // ---------------------------------------------------------------------------
 
-function tryRun(args: string[], stdin?: string): {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-} {
-  // Node's spawnSync takes (command, args[], options). The exit code is
-  // `status` (can be null when killed by signal — treat as -1). We pipe
-  // stdin via the `input` option when caller provided one.
-  const proc = spawnSync(args[0], args.slice(1), {
-    encoding: "utf8",
-    input: stdin,
-  });
-  return {
-    stdout: proc.stdout ?? "",
-    stderr: proc.stderr ?? "",
-    exitCode: proc.status ?? -1,
-  };
-}
+// `tryRun` was extracted to `./proc` as `run` so attest.ts, branch-protection.ts,
+// and doctor.ts share one implementation. Local alias keeps callsites unchanged.
+const tryRun = run;
 
 function getRemote(): GitHubRemote | null {
   const result = tryRun(["git", "remote", "get-url", "origin"]);

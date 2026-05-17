@@ -27,7 +27,13 @@
 // commands like /help.
 
 import { loadConfig } from "./config";
-import { findingsSchemaForPrompt } from "./findings";
+// Pulled from `findings-prompt` (not `findings`) on purpose: the hook fires
+// on every PostToolUse:Skill and every UserPromptExpansion event, and most
+// of those bail at `extractSkillName === null` before doing any work.
+// Importing from findings.ts would force its top-level `z.object(...)` to
+// run on every bail, dragging zod-core + bundled locales into the hot path
+// for no functional reason. findings-prompt is zod-free.
+import { findingsSchemaForPrompt } from "./findings-prompt";
 
 /**
  * Hard cap on stdin size. 16 MiB is comfortably above any realistic Claude

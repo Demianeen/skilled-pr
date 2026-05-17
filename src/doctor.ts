@@ -9,9 +9,9 @@
 // Output convention: ✓ pass / ⚠ warn / ✗ fail / · skip. Every failure or
 // warning includes a one-line `fix` instruction the user can copy-paste.
 
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { run } from "./proc";
 import { parseGitHubRemote, type GitHubRemote } from "./github";
 import { parseConfig } from "./config";
 
@@ -493,26 +493,19 @@ export function formatDoctorReport(
 // I/O entry point
 // ---------------------------------------------------------------------------
 
-/** Run a command, return stdout (or null if exit != 0 / binary not found). */
+/**
+ * Run a command, return stdout (or null on failure). Thin null-on-fail
+ * adapter over the shared `run()` in ./proc - the classify* functions take
+ * a nullable stdout string, so we collapse "non-zero exit" and "spawn
+ * failed" into the same `stdout: null` shape they expect.
+ */
 function tryRun(args: string[]): { stdout: string | null; stderr: string | null; exitCode: number } {
-  try {
-    // Node's spawnSync separates command and args; status is `null` when the
-    // process was killed by a signal - treat that as -1. encoding:"utf8"
-    // gives us string stdout/stderr instead of Buffers.
-    const proc = spawnSync(args[0], args.slice(1), { encoding: "utf8" });
-    // ENOENT (binary not found) doesn't throw — it sets `error` and leaves
-    // status as null. Treat any null status as "couldn't run."
-    if (proc.error || proc.status === null) {
-      return { stdout: null, stderr: proc.stderr ?? null, exitCode: -1 };
-    }
-    return {
-      stdout: proc.status === 0 ? (proc.stdout ?? "") : null,
-      stderr: proc.stderr ?? "",
-      exitCode: proc.status,
-    };
-  } catch {
-    return { stdout: null, stderr: null, exitCode: -1 };
-  }
+  const r = run(args);
+  return {
+    stdout: r.exitCode === 0 ? r.stdout : null,
+    stderr: r.stderr === "" ? null : r.stderr,
+    exitCode: r.exitCode,
+  };
 }
 
 async function readFileOrNull(path: string): Promise<string | null> {

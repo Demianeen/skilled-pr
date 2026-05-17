@@ -35,24 +35,34 @@ jobs:
       - uses: actions/checkout@v4
         if: ${{ steps.release.outputs.release_created }}
 
-      - uses: oven-sh/setup-bun@v2
+      # pnpm/action-setup must come BEFORE actions/setup-node so the latter
+      # can find `pnpm` on PATH to enable its pnpm-store cache.
+      - uses: pnpm/action-setup@v4
         if: ${{ steps.release.outputs.release_created }}
+        with:
+          version: 9
 
-      - run: bun install --frozen-lockfile
-        if: ${{ steps.release.outputs.release_created }}
-
-      - run: bun test
-        if: ${{ steps.release.outputs.release_created }}
-
-      # Switch to npm for publish: bun publish is newer; npm publish has
-      # rock-solid NODE_AUTH_TOKEN handling. setup-node configures auth
-      # against the public npm registry.
       - uses: actions/setup-node@v4
         if: ${{ steps.release.outputs.release_created }}
         with:
-          node-version: 22
+          node-version: '22'
+          cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
+      - run: pnpm install --frozen-lockfile
+        if: ${{ steps.release.outputs.release_created }}
+
+      - run: pnpm test
+        if: ${{ steps.release.outputs.release_created }}
+
+      # Explicit build step (also runs via package.json's prepublishOnly,
+      # but doing it here surfaces build errors before the publish step).
+      - run: pnpm build
+        if: ${{ steps.release.outputs.release_created }}
+
+      # `npm publish` (not `pnpm publish`) is the publish path: it has the
+      # most reliable NODE_AUTH_TOKEN handling and is what setup-node's
+      # `registry-url` is wired for.
       - run: npm publish --access public
         if: ${{ steps.release.outputs.release_created }}
         env:

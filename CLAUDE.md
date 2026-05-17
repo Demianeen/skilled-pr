@@ -31,7 +31,7 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 | `perf` | A change that improves performance |
 | `test` | Adding or updating tests only |
 | `docs` | Documentation-only changes (README, CLAUDE.md, code comments) |
-| `build` | Changes to the build system or dependencies (`bun.lock`, `package.json`) |
+| `build` | Changes to the build system or dependencies (`pnpm-lock.yaml`, `package.json`, `tsup.config.ts`) |
 | `ci` | Changes to CI configuration (`.github/workflows/*`) |
 | `chore` | Everything else that doesn't modify src/ or tests/ |
 | `style` | Formatting only (no logic change) |
@@ -76,11 +76,14 @@ manually) on the new HEAD.
 ### Manual attestation
 
 If you need to bypass the hook (debugging, scripted CI, dogfooding this
-repo's own CLI without `bun link`-ing it globally):
+repo's own CLI without `npm link`-ing it globally):
 
 ```
-bun run src/cli.ts attest --skill review [--findings <path>]
+pnpm dev attest --skill review [--findings <path>]
 ```
+
+(`pnpm dev` is `tsx src/cli.ts` per `package.json` — runs TypeScript
+directly without a build.)
 
 ### Unpushed HEAD recovery
 

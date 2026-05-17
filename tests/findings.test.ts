@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
   computeFingerprint,
   parseFindings,
@@ -281,24 +281,24 @@ describe("buildStatusDescription", () => {
   });
 
   test("empty findings array ⇒ explicit 'no findings'", () => {
-    expect(buildStatusDescription("review", [])).toBe("review — no findings");
+    expect(buildStatusDescription("review", [])).toBe("review: no findings");
   });
 
   test("single severity", () => {
-    expect(buildStatusDescription("review", [fp("error")])).toBe("review — 1 error");
-    expect(buildStatusDescription("review", [fp("warning")])).toBe("review — 1 warning");
+    expect(buildStatusDescription("review", [fp("error")])).toBe("review: 1 error");
+    expect(buildStatusDescription("review", [fp("warning")])).toBe("review: 1 warning");
   });
 
   test("multiple severities", () => {
     const findings = [fp("error"), fp("error"), fp("warning"), fp("info")];
     expect(buildStatusDescription("review", findings)).toBe(
-      "review — 2 errors, 1 warning, 1 info",
+      "review: 2 errors, 1 warning, 1 info",
     );
   });
 
   test("omits zero-count severities", () => {
     const findings = [fp("info"), fp("info")];
-    expect(buildStatusDescription("review", findings)).toBe("review — 2 info");
+    expect(buildStatusDescription("review", findings)).toBe("review: 2 info");
   });
 
   test("stays under GitHub's 140-char status-description limit for 10x findings of each kind", () => {

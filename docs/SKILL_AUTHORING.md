@@ -107,18 +107,20 @@ For a minimal example, the skeleton above is a working skill — copy it, adjust
 
 Before relying on it as a PR gate:
 
-```bash
-# Local dry-run — don't actually post to GitHub
-# (skilled-pr doesn't have a --dry-run flag yet; for now, just write a
-# findings.json by hand and verify it validates against the schema)
+skilled-pr doesn't have a `--dry-run` flag yet, and `attest` always talks
+to GitHub (it needs a pushed SHA to post against). To validate your
+findings JSON before running for real, eyeball it against:
 
-bun run -e '
-import("./node_modules/skilled-pr/src/findings.ts").then(({ parseFindings }) => {
-  const raw = require("fs").readFileSync(".review/findings-my-review.json", "utf8");
-  console.log(parseFindings(raw));
-});
-'
-```
+- [`docs/SCHEMA.md`](./SCHEMA.md) - the human-readable schema reference
+- `src/findings.ts` in the source repo - the actual Zod schema
+
+A useful end-to-end test is a throwaway PR in a sandbox repo: open it,
+invoke your skill, and watch the inline comments + status check populate.
+If the JSON is malformed, `attest` exits non-zero with a clear parse
+error pointing at the bad field.
+
+> Want a programmatic `parseFindings` import? Open an issue - we can
+> expose `skilled-pr/findings` as a separate subpath export.
 
 If parseFindings throws, fix your output before invoking your skill on a real PR.
 

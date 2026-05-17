@@ -9,7 +9,9 @@
 // Output convention: ✓ pass / ⚠ warn / ✗ fail / · skip. Every failure or
 // warning includes a one-line `fix` instruction the user can copy-paste.
 
+import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { run } from "./proc";
 import { parseGitHubRemote, type GitHubRemote } from "./github";
 import { parseConfig } from "./config";
 
@@ -33,34 +35,54 @@ export interface CheckResult {
 // Pure classifiers
 // ---------------------------------------------------------------------------
 
-const WHY_BUN =
-  "skilled-pr is Bun-native; the cli.ts shebang requires bun to execute. Without bun, `skilled-pr` won't run even if it's on PATH.";
+const WHY_NODE =
+  "skilled-pr runs on Node; the dist/cli.js shebang is `#!/usr/bin/env node`. Without node on PATH, `skilled-pr` won't execute even if it was installed. The CLI's `engines.node` is `>=22.0.0` (Node 18 and 20 are both past end-of-life); older Node versions install via npm warning-only and then crash at runtime with a SyntaxError, so the doctor enforces the floor explicitly.";
+
+/** Minimum Node major version the CLI supports. Mirrors `engines.node` in package.json. */
+const MIN_NODE_MAJOR = 22;
 
 /**
- * Classify `bun --version` output. Bun stdout for `--version` is just the
- * version number with a trailing newline, e.g. "1.3.10\n".
+ * Classify `node --version` output. Node stdout for `--version` is the
+ * version prefixed with `v`, e.g. "v22.11.0\n". We accept both forms
+ * (with and without the leading `v`) for forward-compat.
+ *
+ * Returns `fail` (not just `warn`) when the major version is below
+ * MIN_NODE_MAJOR, because a too-old Node will SyntaxError on the
+ * `node22`-target output esbuild emits. A green doctor must mean
+ * "ready to run", not "node is technically installed."
  */
-export function classifyBunVersion(stdout: string | null): CheckResult {
+export function classifyNodeVersion(stdout: string | null): CheckResult {
   if (stdout === null) {
     return {
-      name: "bun installed",
+      name: "node installed",
       status: "fail",
       detail: "not found on PATH",
-      fix: "Install bun: curl -fsSL https://bun.sh/install | bash",
-      why: WHY_BUN,
+      fix: "Install node 22+: https://nodejs.org/ (or `nvm install --lts`)",
+      why: WHY_NODE,
     };
   }
   const version = stdout.trim();
-  if (!/^\d+\.\d+\.\d+/.test(version)) {
+  const match = version.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
     return {
-      name: "bun installed",
+      name: "node installed",
       status: "warn",
       detail: `unexpected version output: ${version}`,
-      fix: "Verify bun is properly installed: bun --version",
-      why: WHY_BUN,
+      fix: "Verify node is properly installed: node --version",
+      why: WHY_NODE,
     };
   }
-  return { name: "bun installed", status: "pass", detail: version, why: WHY_BUN };
+  const major = parseInt(match[1], 10);
+  if (major < MIN_NODE_MAJOR) {
+    return {
+      name: "node installed",
+      status: "fail",
+      detail: `${version} (below required >=${MIN_NODE_MAJOR}.0.0)`,
+      fix: `Upgrade node: nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}`,
+      why: WHY_NODE,
+    };
+  }
+  return { name: "node installed", status: "pass", detail: version, why: WHY_NODE };
 }
 
 const WHY_GH =
@@ -471,24 +493,24 @@ export function formatDoctorReport(
 // I/O entry point
 // ---------------------------------------------------------------------------
 
-/** Run a command, return stdout (or null if exit != 0 / binary not found). */
+/**
+ * Run a command, return stdout (or null on failure). Thin null-on-fail
+ * adapter over the shared `run()` in ./proc - the classify* functions take
+ * a nullable stdout string, so we collapse "non-zero exit" and "spawn
+ * failed" into the same `stdout: null` shape they expect.
+ */
 function tryRun(args: string[]): { stdout: string | null; stderr: string | null; exitCode: number } {
-  try {
-    const proc = Bun.spawnSync(args, { stderr: "pipe" });
-    return {
-      stdout: proc.exitCode === 0 ? proc.stdout.toString() : null,
-      stderr: proc.stderr.toString(),
-      exitCode: proc.exitCode,
-    };
-  } catch {
-    return { stdout: null, stderr: null, exitCode: -1 };
-  }
+  const r = run(args);
+  return {
+    stdout: r.exitCode === 0 ? r.stdout : null,
+    stderr: r.stderr === "" ? null : r.stderr,
+    exitCode: r.exitCode,
+  };
 }
 
 async function readFileOrNull(path: string): Promise<string | null> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return null;
-  return file.text();
+  if (!existsSync(path)) return null;
+  return readFileSync(path, "utf8");
 }
 
 export async function doctor(args: string[] = []) {
@@ -499,9 +521,9 @@ export async function doctor(args: string[] = []) {
 
   const results: CheckResult[] = [];
 
-  // 1. bun
-  const bunResult = tryRun(["bun", "--version"]);
-  results.push(classifyBunVersion(bunResult.stdout));
+  // 1. node
+  const nodeResult = tryRun(["node", "--version"]);
+  results.push(classifyNodeVersion(nodeResult.stdout));
 
   // 2. gh installed
   const ghResult = tryRun(["gh", "--version"]);
@@ -575,7 +597,7 @@ export async function doctor(args: string[] = []) {
     });
   }
 
-  const useColor = Bun.env.NO_COLOR === undefined && process.stdout.isTTY === true;
+  const useColor = process.env.NO_COLOR === undefined && process.stdout.isTTY === true;
   console.log(formatDoctorReport(results, useColor, verbose));
 
   // Exit non-zero if any check failed (warns are OK — they're advisory).

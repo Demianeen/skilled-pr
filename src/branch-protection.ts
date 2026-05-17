@@ -16,6 +16,7 @@
 // clobber any of that. GitHub's `POST .../required_status_checks/contexts`
 // endpoint is purpose-built for this.
 
+import { run } from "./proc";
 import { loadConfig } from "./config";
 import {
   parseGitHubRemote,
@@ -84,21 +85,9 @@ export function buildInitialProtectionPayload(contexts: ReadonlyArray<string>): 
 // I/O entry point
 // ---------------------------------------------------------------------------
 
-function tryRun(args: string[], stdin?: string): {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-} {
-  const proc = Bun.spawnSync(args, {
-    stderr: "pipe",
-    stdin: stdin !== undefined ? Buffer.from(stdin) : undefined,
-  });
-  return {
-    stdout: proc.stdout.toString(),
-    stderr: proc.stderr.toString(),
-    exitCode: proc.exitCode,
-  };
-}
+// `tryRun` was extracted to `./proc` as `run` so attest.ts, branch-protection.ts,
+// and doctor.ts share one implementation. Local alias keeps callsites unchanged.
+const tryRun = run;
 
 function getRemote(): GitHubRemote | null {
   const result = tryRun(["git", "remote", "get-url", "origin"]);

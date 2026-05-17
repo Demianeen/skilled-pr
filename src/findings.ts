@@ -102,24 +102,11 @@ function formatIssuePath(path: ReadonlyArray<string | number | symbol>): string 
   return out;
 }
 
-/**
- * Plain-text description of `FindingInputSchema` for embedding in
- * `additionalContext` system reminders. Co-located with the schema so a
- * schema change forces a docstring change in the same diff.
- */
-export function findingsSchemaForPrompt(): string {
-  return [
-    "Each finding must have:",
-    '  - path: string (repo-relative file path)',
-    "  - line: integer (1-based line on the right side of the diff)",
-    '  - severity: "error" | "warning" | "info"',
-    "  - title: short headline (1 line)",
-    "  - body: full explanation (markdown supported)",
-    "  - suggestion?: optional fix suggestion (string)",
-    '  - side?: "LEFT" | "RIGHT" (defaults to RIGHT)',
-    "If your review found nothing, write an empty array `[]`.",
-  ].join("\n");
-}
+// `findingsSchemaForPrompt` was moved to `./findings-prompt` so hook.ts can
+// import it without dragging the zod schema (+ its ~490 KB of bundled
+// zod-core and locales) onto the PostToolUse hot path. Re-exported here
+// so attest.ts and any other importer keeps the existing import path.
+export { findingsSchemaForPrompt } from "./findings-prompt";
 
 // ---------------------------------------------------------------------------
 // Comment body formatting
@@ -208,7 +195,7 @@ export function formatArtifactComment(
       );
     } else {
       parts.push(
-        `Findings exist but none reach the \`failOn: ${failOn}\` threshold — the gate is passing.`,
+        `Findings exist but none reach the \`failOn: ${failOn}\` threshold; the gate is passing.`,
       );
     }
     parts.push("");
@@ -277,11 +264,11 @@ export function countBySeverity(findings: Finding[]): SeverityCounts {
 /** Compact human description for a GitHub commit-status (140-char limit). */
 export function buildStatusDescription(skillName: string, findings: Finding[] | null): string {
   if (findings === null) return `Reviewed by ${skillName}`;
-  if (findings.length === 0) return `${skillName} — no findings`;
+  if (findings.length === 0) return `${skillName}: no findings`;
   const c = countBySeverity(findings);
   const parts: string[] = [];
   if (c.error) parts.push(`${c.error} error${c.error === 1 ? "" : "s"}`);
   if (c.warning) parts.push(`${c.warning} warning${c.warning === 1 ? "" : "s"}`);
   if (c.info) parts.push(`${c.info} info`);
-  return `${skillName} — ${parts.join(", ")}`;
+  return `${skillName}: ${parts.join(", ")}`;
 }

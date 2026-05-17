@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
+import { Readable } from "node:stream";
 import {
   extractSkillName,
   slugifySkill,
   buildReminder,
   buildHookOutput,
+  readStdin,
 } from "../src/hook";
 
 // ---------------------------------------------------------------------------
@@ -208,5 +210,93 @@ describe("buildHookOutput", () => {
       tool_input: { skill: "review" },
     };
     expect(buildHookOutput(event, [])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readStdin
+//
+// Migration helper: replaces Bun.stdin.text() with a Node-native event-based
+// reader. Bounded on size + idle timeout so a misbehaving parent can't OOM
+// or wedge the hook on the hot path (every PostToolUse:Skill and every
+// UserPromptExpansion event fires this).
+// ---------------------------------------------------------------------------
+
+describe("readStdin", () => {
+  test("empty stream returns empty string", async () => {
+    const stream = Readable.from([]);
+    expect(await readStdin(stream)).toBe("");
+  });
+
+  test("single chunk", async () => {
+    const stream = Readable.from(["hello"]);
+    expect(await readStdin(stream)).toBe("hello");
+  });
+
+  test("multiple chunks concatenated in order", async () => {
+    const stream = Readable.from(["hello ", "world", "!"]);
+    expect(await readStdin(stream)).toBe("hello world!");
+  });
+
+  test("real-world hook payload (JSON split across chunks)", async () => {
+    const payload = JSON.stringify({
+      hook_event_name: "PostToolUse",
+      tool_name: "Skill",
+      tool_input: { skill: "review" },
+    });
+    // Force a split in the middle so we exercise the multi-chunk path.
+    const mid = Math.floor(payload.length / 2);
+    const stream = Readable.from([payload.slice(0, mid), payload.slice(mid)]);
+    expect(await readStdin(stream)).toBe(payload);
+  });
+
+  test("handles multibyte UTF-8 across chunk boundaries", async () => {
+    // 'é' is 0xC3 0xA9 in UTF-8. Split mid-codepoint to verify setEncoding
+    // handles the decoder state across chunks. Node's string decoder buffers
+    // partial codepoints internally; without setEncoding("utf8") we'd see U+FFFD.
+    const buf = Buffer.from("café", "utf8"); // c(1) a(1) f(1) é(2) = 5 bytes
+    const stream = Readable.from([buf.subarray(0, 4), buf.subarray(4)]);
+    expect(await readStdin(stream)).toBe("café");
+  });
+
+  test("rejects when accumulated bytes exceed cap", async () => {
+    // Generate a payload larger than the test's cap. 100 byte cap with a
+    // 120-byte payload should trigger the size guard on the second chunk.
+    const stream = Readable.from(["x".repeat(60), "x".repeat(60)]);
+    await expect(readStdin(stream, 100, 5000)).rejects.toThrow(/exceeded max size 100 bytes/);
+  });
+
+  test("rejects when idle timeout expires (stream open, no data)", async () => {
+    // PassThrough simulates a stream that's open but produces nothing.
+    // The 50 ms timeout should fire quickly enough not to slow the suite.
+    const { PassThrough } = await import("node:stream");
+    const stream = new PassThrough();
+    // Do NOT call .end() - leaves stream open, simulating a misbehaving parent.
+    await expect(readStdin(stream, 16 * 1024 * 1024, 50)).rejects.toThrow(
+      /idle timeout after 50ms/,
+    );
+  });
+
+  test("idle timer resets on each chunk (slow but progressing stream completes)", async () => {
+    // Verify the timer is reset, not absolute. If timer were absolute, a
+    // stream that takes longer than `idleTimeoutMs` overall but never
+    // pauses more than `idleTimeoutMs` between chunks would falsely time out.
+    const { PassThrough } = await import("node:stream");
+    const stream = new PassThrough();
+    const promise = readStdin(stream, 16 * 1024 * 1024, 100);
+    // Three chunks 60ms apart: total 180ms, none of the gaps > 100ms.
+    setTimeout(() => stream.write("a"), 50);
+    setTimeout(() => stream.write("b"), 110);
+    setTimeout(() => stream.write("c"), 170);
+    setTimeout(() => stream.end(), 220);
+    await expect(promise).resolves.toBe("abc");
+  });
+
+  test("propagates stream errors", async () => {
+    const { PassThrough } = await import("node:stream");
+    const stream = new PassThrough();
+    const promise = readStdin(stream, 16 * 1024 * 1024, 5000);
+    setTimeout(() => stream.destroy(new Error("simulated read error")), 10);
+    await expect(promise).rejects.toThrow(/simulated read error/);
   });
 });

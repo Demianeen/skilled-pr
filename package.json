@@ -4,11 +4,14 @@
   "description": "Open review transport for AI-native development. Attestation that your code was reviewed by AI skills.",
   "type": "module",
   "bin": {
-    "skilled-pr": "./src/cli.ts"
+    "skilled-pr": "./dist/cli.js"
   },
   "scripts": {
-    "test": "bun test",
-    "dev": "bun run src/cli.ts"
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx src/cli.ts",
+    "prepublishOnly": "pnpm run build"
   },
   "keywords": [
     "code-review",
@@ -29,10 +32,11 @@
     "url": "https://github.com/Demianeen/skilled-pr/issues"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=22.0.0"
   },
+  "packageManager": "pnpm@9.0.0",
   "files": [
-    "src",
+    "dist",
     "docs",
     "README.md",
     "CHANGELOG.md",
@@ -42,10 +46,12 @@
     "access": "public"
   },
   "devDependencies": {
-    "bun-types": "latest"
-  },
-  "dependencies": {
+    "@types/node": "^22.0.0",
     "jsonc-parser": "^3.3.1",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
     "zod": "^4.3.6"
   }
 }

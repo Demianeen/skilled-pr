@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { FailOn } from "./findings";
 
@@ -59,9 +60,8 @@ export function parseConfig(raw: string): SkilledPRConfig {
 }
 
 export async function loadConfig(path = ".skilledpr.jsonc"): Promise<SkilledPRConfig | null> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) return null;
-  return parseConfig(await file.text());
+  if (!existsSync(path)) return null;
+  return parseConfig(readFileSync(path, "utf8"));
 }
 
 export function generateDefaultConfig(): string {

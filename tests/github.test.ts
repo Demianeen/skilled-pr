@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { parseGitHubRemote, buildStatusContext, classifyGhError } from "../src/github";
 
 describe("parseGitHubRemote", () => {

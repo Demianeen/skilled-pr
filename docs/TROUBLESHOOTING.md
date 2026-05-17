@@ -4,7 +4,7 @@ When something doesn't work, run `skilled-pr doctor` first. It checks every comm
 
 ```bash
 $ skilled-pr doctor
-✓ bun installed          1.3.10
+✓ node installed         v20.11.0
 ✓ gh installed           2.86.0
 ⚠ gh authenticated       not signed in
   Fix: gh auth login
@@ -22,21 +22,32 @@ Below is the same coverage as a reference page, with the failure mode → what y
 
 You installed the package but the binary isn't on your PATH.
 
-**Most common cause: fish shell.** Bun's installer auto-adds `~/.bun/bin` to bash/zsh via `~/.bashrc` and `~/.zshrc`, but doesn't touch fish config. Add it manually:
-
-```fish
-# Add ~/.bun/bin to fish's universal PATH (persists across sessions)
-fish_add_path ~/.bun/bin
-```
-
-Then `which skilled-pr` should print `/Users/<you>/.bun/bin/skilled-pr`.
-
-For zsh / bash users on NixOS or with custom configs, check that `~/.bun/bin` is in `$PATH`. Add to your shell rc if not:
+**Where the global bin lives depends on your package manager.** Each has its own global directory; check yours with:
 
 ```bash
-# zsh / bash
-export PATH="$HOME/.bun/bin:$PATH"
+npm config get prefix         # e.g. /usr/local  → binaries in /usr/local/bin
+pnpm bin -g                   # prints the global bin dir directly
 ```
+
+**Most common cause: fish shell on systems where npm/pnpm install to a custom prefix** (Homebrew, nvm, asdf, Volta, ...). The installer may not touch fish's `$PATH`. Add it manually:
+
+```fish
+# Example: pnpm global on macOS
+fish_add_path (pnpm bin -g)
+
+# Example: npm global with default prefix on macOS Homebrew
+fish_add_path /opt/homebrew/bin
+```
+
+For zsh / bash, do the equivalent in `~/.zshrc` / `~/.bashrc`:
+
+```bash
+export PATH="$(pnpm bin -g):$PATH"   # if you used pnpm
+# or
+export PATH="$(npm config get prefix)/bin:$PATH"   # if you used npm
+```
+
+After editing, open a fresh shell and `which skilled-pr` should print a path.
 
 ## `attest` exits with code 2: "HEAD is not pushed"
 
@@ -71,7 +82,7 @@ Two distinct causes share this error:
 skilled-pr's pre-flight catches this and exits with code 2 + a clear message. If you're seeing the raw `gh: Not Found (HTTP 404)`, your skilled-pr is old. Upgrade:
 
 ```bash
-bun add -g skilled-pr@latest
+npm i -g skilled-pr@latest        # or `pnpm add -g skilled-pr@latest`
 ```
 
 ### Cause B: gh authenticated to wrong account
@@ -167,11 +178,15 @@ Three flavors:
   skilled-pr attest --skill review || true
   ```
 
-## NPM install warnings about `engines: bun`
+## "Unsupported engine" warning during install
 
-The `engines` field declares this CLI needs bun. npm warns but installs anyway. The actual enforcement is the `#!/usr/bin/env bun` shebang on the CLI script — without bun installed, running `skilled-pr` will fail with "bun: command not found."
+The `engines` field declares Node.js 22+ (the current LTS line — Node 18 and 20 are both past end-of-life as of mid-2026). If you're on an older Node, npm/pnpm warn but install anyway. Earlier Node versions may load `dist/cli.js` but trip over modern syntax or missing built-ins at runtime.
 
-**Fix:** install bun (`curl -fsSL https://bun.sh/install | bash`), then re-run.
+**Fix:** upgrade Node (use [nvm](https://github.com/nvm-sh/nvm) or [Volta](https://volta.sh/) — your distro's Node is often stale):
+
+```bash
+nvm install --lts && nvm use --lts
+```
 
 ## Still stuck?
 

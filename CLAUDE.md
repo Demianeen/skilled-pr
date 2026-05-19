@@ -63,11 +63,15 @@ is plug-and-play — you don't run `attest` by hand:
    `skilled-pr init`) fires on `PostToolUse:Skill` / `UserPromptExpansion`
    and injects a system reminder telling the model to:
      - write findings to `.review/findings-<skill-slug>.json` as a JSON array
-       (schema in `src/findings.ts`), and
-     - run `skilled-pr attest --skill <name> --findings <path>`.
-3. `attest` posts each new finding as an inline PR comment (deduped by
-   fingerprint across re-runs) and posts the commit-status check against
+       (schema in `src/findings.ts`),
+     - if `summaryPrompt` is configured, also write a markdown summary to
+       `.review/summary-<skill-slug>.md` following the prompt, and
+     - run `skilled-pr attest --skill <name> --findings <path> [--summary <path>]`.
+3. `attest` posts one per-skill artifact summary comment (PATCH-updated in
+   place on re-runs via an HTML marker) and the commit-status check against
    `HEAD`. Severity gates the status state via `failOn` in the config.
+   Inline PR comments were removed; the artifact comment is the sole
+   PR-visible review surface.
 
 The status is posted per-SHA. If you push a new commit, the previous
 attestation does **not** carry over — re-invoke the skill (or run `attest`
@@ -91,6 +95,27 @@ directly without a build.)
 with code **2** and prints push instructions. The system reminder tells the
 model to ask the user before running `git push` — pushing modifies the
 remote, so don't bypass the confirmation step.
+
+## Worktree convention
+
+When creating a `git worktree` for parallel branches, put it under
+`.claude/worktrees/<branch-or-purpose>` in the repo root. `.claude/` is
+gitignored, so worktree contents stay local and don't clutter the parent
+directory or pollute IDE/Spotlight project lists.
+
+Examples:
+- `.claude/worktrees/codex` for the `feat/codex-hook-support` branch
+- `.claude/worktrees/pnpm-10` for a `build/bump-pnpm-10` branch
+
+To move an existing sibling worktree to this layout:
+
+```
+mkdir -p .claude/worktrees
+git worktree move ../skilled-pr-codex .claude/worktrees/codex
+```
+
+`git worktree move` is non-destructive; uncommitted changes and the branch
+checkout are preserved.
 
 ## Pre-commit self-review
 

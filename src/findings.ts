@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -31,30 +30,16 @@ export const FindingInputSchema = z.object({
 
 export const FindingsInputSchema = z.array(FindingInputSchema);
 
-/** What a review skill produces. Inferred from the zod schema. */
+/**
+ * What a review skill produces. Inferred from the zod schema.
+ *
+ * `Finding` is now an alias for `FindingInput`. Earlier versions extended
+ * the input shape with a `fingerprint` field used to dedupe inline PR
+ * comments across attest re-runs. Inline comments were removed in favour
+ * of a single artifact summary, so fingerprints have no consumer left.
+ */
 export type FindingInput = z.infer<typeof FindingInputSchema>;
-
-/** A finding after the tool has enriched it with a fingerprint. */
-export interface Finding extends FindingInput {
-  fingerprint: string;
-}
-
-// ---------------------------------------------------------------------------
-// Fingerprinting
-//   SHA256(path + ":" + title + ":" + first_20_chars_of_body)
-// ---------------------------------------------------------------------------
-
-export function computeFingerprint(input: {
-  path: string;
-  title: string;
-  body: string;
-}): string {
-  const material = `${input.path}:${input.title}:${input.body.slice(0, 20)}`;
-  // Truncate to 16 hex chars (64 bits): short enough to keep embedded
-  // comment markers readable, long enough that collisions within a single
-  // repo are effectively impossible. Bump if we ever see one.
-  return createHash("sha256").update(material).digest("hex").slice(0, 16);
-}
+export type Finding = FindingInput;
 
 // ---------------------------------------------------------------------------
 // Parsing + validation (zod-backed)
@@ -80,10 +65,7 @@ export function parseFindings(raw: string): Finding[] {
     throw new Error(`${formatIssuePath(issue.path)}: ${issue.message}`);
   }
 
-  return result.data.map((f) => ({
-    ...f,
-    fingerprint: computeFingerprint({ path: f.path, title: f.title, body: f.body }),
-  }));
+  return result.data;
 }
 
 /**
@@ -109,55 +91,17 @@ function formatIssuePath(path: ReadonlyArray<string | number | symbol>): string 
 export { findingsSchemaForPrompt } from "./findings-prompt";
 
 // ---------------------------------------------------------------------------
-// Comment body formatting
-// ---------------------------------------------------------------------------
-
-const SEVERITY_BADGE: Record<Severity, string> = {
-  error: "🔴 **error**",
-  warning: "🟡 **warning**",
-  info: "🔵 **info**",
-};
-
-/** Render a finding as a GitHub PR review comment body with a fingerprint marker. */
-export function formatCommentBody(finding: Finding, skillName: string): string {
-  const parts: string[] = [];
-  parts.push(`${SEVERITY_BADGE[finding.severity]} · ${finding.title}`);
-  parts.push("");
-  parts.push(finding.body);
-
-  if (finding.suggestion) {
-    parts.push("");
-    parts.push("**Suggestion:**");
-    parts.push(finding.suggestion);
-  }
-
-  parts.push("");
-  parts.push(`<sub>via \`skilled-pr\` · skill: \`${skillName}\`</sub>`);
-  parts.push(`<!-- skilled-pr:fp:${finding.fingerprint} -->`);
-
-  return parts.join("\n");
-}
-
-/** Extract the fingerprint from a comment body, or null if not present. */
-export function extractFingerprint(commentBody: string): string | null {
-  const match = commentBody.match(/<!-- skilled-pr:fp:([a-f0-9]+) -->/);
-  return match ? match[1] : null;
-}
-
-// ---------------------------------------------------------------------------
 // Artifact summary comment (per-skill, top-level on the PR)
 //
-// While inline fingerprint-marked comments cover individual findings, the
-// artifact comment is the single per-skill summary that posts even when
-// there are zero findings. Without it, the only PR-visible evidence of a
-// review is a green status check — easy to fabricate or miss. The artifact
-// is the audit trail: it tells reviewers "this skill ran on this commit
-// and produced N findings of severity X/Y/Z."
+// The artifact comment is the single per-skill summary that posts on every
+// attest run, even when there are zero findings. It's the only PR-visible
+// evidence of a review beyond the status check: a green check is easy to
+// fabricate or miss; the artifact is the audit trail that says "this skill
+// ran on this commit and produced N findings of severity X/Y/Z."
 //
 // Posted as a top-level PR comment (issues endpoint), edited (PATCHed) on
 // each re-attestation so there's only ever ONE artifact per skill. Marker
 // `<!-- skilled-pr:artifact:<skill-name> -->` lets us find and update it.
-// Distinct from the inline `:fp:<hash>` marker — no collision risk.
 // ---------------------------------------------------------------------------
 
 /**
@@ -199,14 +143,95 @@ export function formatArtifactComment(
       );
     }
     parts.push("");
-    parts.push("See inline comments on the PR for details on each finding.");
+
+    // Render each finding inline as a collapsible <details> section.
+    // Inline PR comments were dropped (each finding used to anchor at
+    // file:line); the artifact comment is now the sole PR-visible review
+    // artifact, so detail lives here. Ordered: errors first, then
+    // warnings, then info; original input order within each tier.
+    const ordered = orderFindingsForArtifact(findings);
+    parts.push("### Findings");
+    parts.push("");
+    for (const f of ordered) {
+      parts.push(renderFindingDetails(f));
+      parts.push("");
+    }
   }
 
-  parts.push("");
   parts.push(`<sub>via \`skilled-pr\` · updated on each attestation</sub>`);
-  parts.push(`<!-- skilled-pr:artifact:${skillName} -->`);
+  parts.push("");
+  parts.push(artifactMarker(skillName));
 
   return parts.join("\n");
+}
+
+/**
+ * Stable ordering for the artifact body: most-severe-first, original input
+ * order within each tier. Lets the reviewer scan blockers without scrolling
+ * past noise.
+ */
+function orderFindingsForArtifact(findings: Finding[]): Finding[] {
+  const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
+  return [...findings].sort((a, b) => rank[a.severity] - rank[b.severity]);
+}
+
+const SEVERITY_BADGE: Record<Severity, string> = {
+  error: "🔴",
+  warning: "🟡",
+  info: "🔵",
+};
+
+/**
+ * One finding rendered as a `<details>` block. Summary stays scannable
+ * (badge + path:line + title); body content is hidden until clicked.
+ * Keeps the PR conversation tab short even when there are 20+ findings.
+ */
+function renderFindingDetails(f: Finding): string {
+  const lines: string[] = [];
+  lines.push("<details>");
+  lines.push(
+    `<summary>${SEVERITY_BADGE[f.severity]} <code>${f.path}:${f.line}</code> ${escapeForSummary(f.title)}</summary>`,
+  );
+  lines.push("");
+  lines.push(f.body);
+  if (f.suggestion) {
+    lines.push("");
+    lines.push("**Suggestion:**");
+    lines.push(f.suggestion);
+  }
+  lines.push("");
+  lines.push("</details>");
+  return lines.join("\n");
+}
+
+/**
+ * Conservative escape for content placed inside `<summary>...</summary>`.
+ * GitHub's flavored markdown lets us mix HTML and markdown; the only thing
+ * that breaks a summary is a literal `<` starting an HTML tag, so we
+ * neutralise just that.
+ */
+function escapeForSummary(s: string): string {
+  return s.replace(/</g, "&lt;");
+}
+
+/** HTML marker the artifact comment carries so future attest runs can PATCH-in-place. */
+export function artifactMarker(skillName: string): string {
+  return `<!-- skilled-pr:artifact:${skillName} -->`;
+}
+
+/**
+ * Wrap an arbitrary markdown body with the artifact marker so a future
+ * `attest` run can find and PATCH-update it. Used for user-provided
+ * summaries that may not include the marker themselves. Idempotent:
+ * if the body already contains the marker (e.g. the user's template
+ * inlines it), no second copy is appended.
+ */
+export function wrapWithArtifactMarker(body: string, skillName: string): string {
+  const marker = artifactMarker(skillName);
+  if (body.includes(marker)) return body;
+  // Trim a trailing newline so the marker sits one blank line below content.
+  const trimmed = body.replace(/\n+$/, "");
+  return `${trimmed}\n\n${marker}\n`;
 }
 
 /**

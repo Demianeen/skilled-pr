@@ -78,4 +78,49 @@ describe("parseAttestArgs", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/--findings.*requires a value/i);
   });
+
+  // --summary tests ----------------------------------------------------------
+
+  test("parses --summary <path>", () => {
+    expect(
+      parseAttestArgs(["--skill", "review", "--summary", ".review/summary-review.md"]),
+    ).toEqual({
+      ok: true,
+      skill: "review",
+      findings: undefined,
+      summary: ".review/summary-review.md",
+    });
+  });
+
+  test("--summary is optional - absent is fine", () => {
+    expect(parseAttestArgs(["--skill", "review"]).ok).toBe(true);
+    expect((parseAttestArgs(["--skill", "review"]) as { summary?: string }).summary).toBeUndefined();
+  });
+
+  test("parses all three flags together regardless of order", () => {
+    const expected = {
+      ok: true,
+      skill: "review",
+      findings: "f.json",
+      summary: "s.md",
+    };
+    expect(
+      parseAttestArgs(["--skill", "review", "--findings", "f.json", "--summary", "s.md"]),
+    ).toEqual(expected);
+    expect(
+      parseAttestArgs(["--summary", "s.md", "--skill", "review", "--findings", "f.json"]),
+    ).toEqual(expected);
+  });
+
+  test("fails when --summary has no value (trailing)", () => {
+    const result = parseAttestArgs(["--skill", "review", "--summary"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/--summary.*requires a value/i);
+  });
+
+  test("fails when --summary is followed by another flag", () => {
+    const result = parseAttestArgs(["--skill", "review", "--summary", "--findings", "f.json"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/--summary.*requires a value/i);
+  });
 });

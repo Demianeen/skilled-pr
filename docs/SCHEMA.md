@@ -32,15 +32,15 @@ The file path is `.review/findings-<skill-slug>.json`. The slug is derived from 
 
 ### `path` (required, string)
 
-Repo-relative file path of the line being commented on. Must be a file that exists in the diff GitHub knows about — otherwise GitHub rejects the inline comment.
+Repo-relative file path the finding applies to. Used in the artifact comment's per-finding summary (`<summary>🟡 src/api/users.ts:42 - title</summary>`) so reviewers can scan and jump.
 
 Example: `"src/api/users.ts"` (not `"./src/api/users.ts"`, not absolute paths).
 
 ### `line` (required, integer ≥ 1)
 
-The line number in the diff to attach the comment to. **1-based.** GitHub will reject lines that aren't part of the changed-lines set in the PR (i.e., lines outside the diff hunks).
+1-based line number the finding applies to. Rendered alongside `path` in the artifact comment's per-finding summary. Status-check severity counts derive from the array regardless of line; the line itself is only display.
 
-If you want to comment on a line that's been deleted (vs. added), set `side: "LEFT"`. Default `"RIGHT"` means "the new version of the file."
+Earlier versions of skilled-pr posted one inline PR comment per finding and required `line` to fall inside the diff hunks (GitHub rejected anything else with HTTP 422). That constraint is gone; the field is now just metadata.
 
 ### `severity` (required, enum)
 
@@ -48,9 +48,9 @@ One of `"error"`, `"warning"`, `"info"`.
 
 The user's `.skilledpr.jsonc` has a `failOn` field that decides which severities block the PR:
 
-- `failOn: "error"` (default) — `error` blocks, `warning` and `info` are advisory
-- `failOn: "warning"` — `error` and `warning` block, `info` is advisory
-- `failOn: "none"` — nothing blocks; the gate passes as long as the skill attests
+- `failOn: "error"` (default) - `error` blocks, `warning` and `info` are advisory
+- `failOn: "warning"` - `error` and `warning` block, `info` is advisory
+- `failOn: "none"` - nothing blocks; the gate passes as long as the skill attests
 
 **Severity guidance:**
 
@@ -62,30 +62,21 @@ The user's `.skilledpr.jsonc` has a `failOn` field that decides which severities
 
 ### `title` (required, non-empty string)
 
-Short one-line headline. Becomes the first line of the inline comment, bolded with the severity badge.
+Short one-line headline. Becomes the `<summary>` text for the finding's collapsible `<details>` block in the artifact comment. Keep it scannable; the body has the room for prose.
 
 ### `body` (required, non-empty string)
 
-Full explanation. Markdown is rendered by GitHub. Code blocks work, inline code works, links work.
+Full explanation. Lives inside the `<details>` block so it's hidden until the reviewer clicks. Markdown is rendered by GitHub; code blocks, inline code, and links all work.
 
 ### `suggestion` (optional, string)
 
-A proposed fix. If present, rendered under a `**Suggestion:**` block in the inline comment.
+A proposed fix. If present, rendered under a `**Suggestion:**` heading inside the `<details>` block.
 
-For "I want GitHub's suggestion-block UI" (the one with "Apply suggested change" button), include a fenced `suggestion` block inside the body — that's GitHub-native syntax, separate from this field:
-
-````
-\`\`\`suggestion
-fixed code here
-\`\`\`
-````
+GitHub's native "Apply suggested change" UI only fires on inline review comments and isn't available from a regular issue comment, so the fenced `suggestion` block trick won't auto-apply here. Treat this as plain markdown content.
 
 ### `side` (optional, "LEFT" or "RIGHT", default "RIGHT")
 
-Which side of the diff the comment attaches to.
-
-- `"RIGHT"` (default) — the added/modified line. Use this 99% of the time.
-- `"LEFT"` — the deleted line. Use only when commenting on something that was removed.
+Reserved. Previously used to disambiguate added vs deleted lines when each finding posted as an inline review comment. Currently no rendering difference; kept in the schema so existing skills don't need to remove the field. Likely revived if/when a per-line addressing mode comes back.
 
 ## Validation
 
@@ -98,24 +89,51 @@ findings[2].severity: Invalid enum value. Expected "error" | "warning" | "info",
 
 The CLI exits with non-zero status without posting anything.
 
-## Dedupe
+## How the artifact comment is built
 
-You don't need to do anything for dedupe — skilled-pr handles it. Each finding gets a fingerprint computed as:
+`skilled-pr attest --skill <name> --findings <path>` posts (or PATCHes in place) one comment per skill on the PR. Identified by the HTML marker `<!-- skilled-pr:artifact:<skill> -->` at the end of the body, which lets future attest runs find and update the same comment.
+
+The default body is rendered by `formatArtifactComment` in `src/findings.ts`:
 
 ```
-SHA256(path + ":" + title + ":" + first_20_chars_of_body)
+## ⚠️ `review` reviewed `abc1234`
+
+**Findings:** 3 (1 🔴 error · 2 🟡 warning)
+
+**🚫 This PR is blocked** because `failOn: error` is set and 1 finding has severity at or above that threshold.
+
+### Findings
+
+<details>
+<summary>🔴 <code>src/auth.ts:42</code> SQL injection in login query</summary>
+
+The login handler concatenates the email field into the WHERE clause...
+
+**Suggestion:**
+Use parameterized queries: `db.query('SELECT ... WHERE email = $1', [email])`.
+
+</details>
+
+<details>
+<summary>🟡 <code>src/api.ts:88</code> Missing input validation</summary>
+...
+</details>
+
+<sub>via `skilled-pr` · updated on each attestation</sub>
+<!-- skilled-pr:artifact:review -->
 ```
 
-(truncated to 16 hex chars for readable HTML comment markers)
+Findings are sorted error-first, then warnings, then info; original input order within each tier.
 
-On re-run, attest fetches the PR's existing inline comments, extracts fingerprints from their `<!-- skilled-pr:fp:<hash> -->` markers, and skips findings whose fingerprint is already there.
+### Per-project custom summaries (`--summary` flag)
 
-This means:
-- Re-running attest on the same SHA is idempotent
-- Updating a finding's `body` past the first 20 characters won't trigger a re-post
-- Changing the `title` or `path` WILL trigger a re-post (new fingerprint)
+If `.skilledpr.jsonc` includes a `summaryPrompt` field, the hook reminder asks the skill to render its own summary to `.review/summary-<slug>.md` following the prompt. `attest` is then invoked with `--summary <path>` and posts the file's contents verbatim as the artifact body (the marker is auto-appended).
 
-If you want to evolve a finding's wording without re-posting, append to the body (keep the first 20 chars stable).
+This lets each skill render in whatever format suits its domain - a typo-check skill emitting a `file:line: 'teh' -> 'the'` table, a French-translation skill showing side-by-side phrase diffs, a security-review skill embedding CVE references. The `findings.json` array stays the same shape (so the status check still counts severities for `failOn` gating); only the rendered comment changes.
+
+## Idempotency
+
+Re-running `attest` on the same SHA is idempotent: the artifact comment is found by marker and PATCHed in place. The status check is replaced. There are no duplicate comments per re-run.
 
 ## Minimal example
 

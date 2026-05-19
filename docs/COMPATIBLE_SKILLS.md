@@ -8,10 +8,10 @@ If a skill you want isn't here, you can write your own. See [SKILL_AUTHORING.md]
 
 | Skill | Source | What it does | Severity posture |
 |---|---|---|---|
-| `coderabbit:review` | [CodeRabbit](https://github.com/marketplace/coderabbit) | Cloud-backed AI review with polished output. Posts findings inline. | Mixed (code-quality + correctness) |
+| `coderabbit:review` | [CodeRabbit](https://github.com/marketplace/coderabbit) | Cloud-backed AI review with polished output. | Mixed (code-quality + correctness) |
 | `coderabbit:code-review` | [CodeRabbit](https://github.com/marketplace/coderabbit) | Alternative entry point for the same engine. | Same as `coderabbit:review` |
 | `coderabbit:autofix` | [CodeRabbit](https://github.com/marketplace/coderabbit) | Follow-up pass that auto-applies low-risk fixes. Useful as a second skill after `coderabbit:review`. | Same |
-| `gstack:review` | [gstack](https://garryslist.org/gstack/) | Multi-specialist review (testing, maintainability, security, performance). Dispatches subagents in parallel, fingerprints findings, confidence-gated. | Both, with confidence-gated suppression |
+| `gstack:review` | [gstack](https://garryslist.org/gstack/) | Multi-specialist review (testing, maintainability, security, performance). Dispatches subagents in parallel, confidence-gated. | Both, with confidence-gated suppression |
 | `gstack:cso` | [gstack](https://garryslist.org/gstack/) | Chief Security Officer mode. OWASP/STRIDE, dependency supply chain, secrets archaeology. | Correctness (security-only) |
 | `gstack:design-review` | [gstack](https://garryslist.org/gstack/) | Visual / UX audit. Frontend-only. | Code-quality |
 | `vercel-plugin:react-best-practices` | [Vercel plugin](https://vercel.com/docs/agents) | React-specific quality checks. Triggers on TSX changes. | Code-quality |

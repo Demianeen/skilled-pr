@@ -142,6 +142,54 @@ describe("buildReminder", () => {
     expect(r).toContain("git push");
     expect(r).toMatch(/ask the user/i);
   });
+
+  // -------------------------------------------------------------------------
+  // summaryPrompt path
+  // -------------------------------------------------------------------------
+
+  test("without summaryPrompt: 3-step reminder, no summary mention, no --summary flag", () => {
+    const r = buildReminder("review");
+    expect(r).toMatch(/three things in order/i);
+    expect(r).not.toContain("summary-review.md");
+    expect(r).not.toContain("--summary");
+  });
+
+  test("with summaryPrompt: 4-step reminder, instructs skill to write summary.md", () => {
+    const prompt = "Group findings by file; include a Suggestion block for each.";
+    const r = buildReminder("review", prompt);
+    expect(r).toMatch(/four things in order/i);
+    // Instructs the skill where to write the summary
+    expect(r).toContain(".review/summary-review.md");
+    // Embeds the user's prompt verbatim
+    expect(r).toContain(prompt);
+    // attest command now includes --summary
+    expect(r).toContain("--summary .review/summary-review.md");
+  });
+
+  test("empty summaryPrompt is treated as absent (falls back to 3-step)", () => {
+    const r = buildReminder("review", "");
+    expect(r).toMatch(/three things in order/i);
+    expect(r).not.toContain("--summary");
+  });
+
+  test("namespaced skill names get the correct summary path slug", () => {
+    const r = buildReminder("coderabbit:review", "Format hints");
+    expect(r).toContain(".review/summary-coderabbit-review.md");
+    expect(r).toContain("--summary .review/summary-coderabbit-review.md");
+    // attest --skill keeps the original (un-slugified) skill name.
+    expect(r).toContain("--skill coderabbit:review");
+  });
+
+  test("multi-line summaryPrompt is embedded with each line indented", () => {
+    // Indentation matters because the prompt is nested under a numbered
+    // step; without indenting, the second line would visually break out
+    // of the list structure in the rendered reminder.
+    const prompt = "line 1\nline 2\nline 3";
+    const r = buildReminder("review", prompt);
+    expect(r).toContain("   line 1");
+    expect(r).toContain("   line 2");
+    expect(r).toContain("   line 3");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -210,6 +258,29 @@ describe("buildHookOutput", () => {
       tool_input: { skill: "review" },
     };
     expect(buildHookOutput(event, [])).toBeNull();
+  });
+
+  test("propagates summaryPrompt into the embedded reminder", () => {
+    const event = {
+      hook_event_name: "PostToolUse",
+      tool_name: "Skill",
+      tool_input: { skill: "review" },
+    };
+    const out = buildHookOutput(event, ["review"], "Custom format guidance");
+    const parsed = JSON.parse(out!);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Custom format guidance");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("--summary");
+  });
+
+  test("undefined summaryPrompt produces the no-summary 3-step reminder", () => {
+    const event = {
+      hook_event_name: "PostToolUse",
+      tool_name: "Skill",
+      tool_input: { skill: "review" },
+    };
+    const out = buildHookOutput(event, ["review"], undefined);
+    const parsed = JSON.parse(out!);
+    expect(parsed.hookSpecificOutput.additionalContext).not.toContain("--summary");
   });
 });
 

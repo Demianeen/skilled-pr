@@ -6,6 +6,8 @@ import {
   buildStatusDescription,
   formatArtifactComment,
   extractArtifactSkillName,
+  artifactMarker,
+  wrapWithArtifactMarker,
   type Finding,
 } from "../src/findings";
 
@@ -293,14 +295,63 @@ describe("formatArtifactComment", () => {
     expect(out).toContain("passing");
   });
 
-  test("body has guidance to inline comments when findings exist", () => {
+  test("body has a Findings section when findings exist", () => {
+    // Inline PR comments were dropped; the artifact comment is now the
+    // sole PR-visible review surface, so finding details must live here.
     const out = formatArtifactComment("review", SHA, [fp("info")], "error");
-    expect(out).toContain("inline comments");
+    expect(out).toContain("### Findings");
+    expect(out).toContain("<details>");
+    expect(out).toContain("<summary>");
   });
 
-  test("body does NOT mention inline comments when zero findings", () => {
+  test("body does NOT have a Findings section when zero findings", () => {
     const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).not.toContain("inline comments");
+    expect(out).not.toContain("### Findings");
+    expect(out).not.toContain("<details>");
+  });
+
+  test("renders each finding as a collapsible <details> block with path:line + title", () => {
+    const findings: Finding[] = [
+      { path: "src/a.ts", line: 10, severity: "warning", title: "First", body: "B1" },
+      { path: "src/b.ts", line: 20, severity: "error", title: "Second", body: "B2" },
+    ];
+    const out = formatArtifactComment("review", SHA, findings, "error");
+    // Both findings rendered.
+    expect(out).toContain("src/a.ts:10");
+    expect(out).toContain("First");
+    expect(out).toContain("B1");
+    expect(out).toContain("src/b.ts:20");
+    expect(out).toContain("Second");
+    expect(out).toContain("B2");
+    // Errors sorted before warnings.
+    expect(out.indexOf("Second")).toBeLessThan(out.indexOf("First"));
+  });
+
+  test("includes the suggestion when a finding has one", () => {
+    const findings: Finding[] = [
+      {
+        path: "src/a.ts",
+        line: 1,
+        severity: "warning",
+        title: "t",
+        body: "b",
+        suggestion: "do X instead",
+      },
+    ];
+    const out = formatArtifactComment("review", SHA, findings, "error");
+    expect(out).toContain("**Suggestion:**");
+    expect(out).toContain("do X instead");
+  });
+
+  test("escapes literal '<' in finding titles so the summary tag doesn't break", () => {
+    // GitHub renders the summary as raw HTML; an un-escaped `<` would open
+    // a tag and corrupt the rest of the summary text.
+    const findings: Finding[] = [
+      { path: "a.ts", line: 1, severity: "info", title: "fix <script> in body", body: "b" },
+    ];
+    const out = formatArtifactComment("review", SHA, findings, "error");
+    expect(out).toContain("fix &lt;script>");
+    expect(out).not.toContain("fix <script>");
   });
 });
 
@@ -330,5 +381,48 @@ describe("extractArtifactSkillName", () => {
   test("round-trips through formatArtifactComment", () => {
     const body = formatArtifactComment("plugin:my-skill", "abc1234", [], "error");
     expect(extractArtifactSkillName(body)).toBe("plugin:my-skill");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// artifactMarker + wrapWithArtifactMarker
+// ---------------------------------------------------------------------------
+
+describe("artifactMarker", () => {
+  test("renders the HTML marker for a skill", () => {
+    expect(artifactMarker("review")).toBe("<!-- skilled-pr:artifact:review -->");
+  });
+
+  test("preserves plugin-namespaced skill names", () => {
+    expect(artifactMarker("coderabbit:review")).toBe(
+      "<!-- skilled-pr:artifact:coderabbit:review -->",
+    );
+  });
+});
+
+describe("wrapWithArtifactMarker", () => {
+  test("appends the marker when missing", () => {
+    const wrapped = wrapWithArtifactMarker("Body text.", "review");
+    expect(wrapped).toContain("Body text.");
+    expect(wrapped).toContain("<!-- skilled-pr:artifact:review -->");
+    // Round-trips through extractArtifactSkillName so future attest runs find it.
+    expect(extractArtifactSkillName(wrapped)).toBe("review");
+  });
+
+  test("is idempotent: does not append a second marker when already present", () => {
+    const original = "Body text.\n\n<!-- skilled-pr:artifact:review -->";
+    expect(wrapWithArtifactMarker(original, "review")).toBe(original);
+  });
+
+  test("normalises trailing whitespace so the marker sits one blank line below content", () => {
+    // Skills may emit summaries with arbitrary trailing newlines. The marker
+    // should land in a predictable place regardless of input shape.
+    const wrapped = wrapWithArtifactMarker("Body.\n\n\n\n", "review");
+    expect(wrapped).toBe("Body.\n\n<!-- skilled-pr:artifact:review -->\n");
+  });
+
+  test("works with plugin-namespaced skills", () => {
+    const wrapped = wrapWithArtifactMarker("X", "coderabbit:review");
+    expect(extractArtifactSkillName(wrapped)).toBe("coderabbit:review");
   });
 });

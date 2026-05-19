@@ -87,4 +87,31 @@ describe("parseConfig", () => {
     // know how to keep that behavior in their shell.
     expect(() => parseConfig('{ "sha": "pushed" }')).toThrow(/skilled-pr attest .* \|\| true/);
   });
+
+  // -------------------------------------------------------------------------
+  // summaryPrompt
+  // -------------------------------------------------------------------------
+
+  test("summaryPrompt is undefined by default (built-in artifact body used)", () => {
+    expect(parseConfig('{}').summaryPrompt).toBeUndefined();
+  });
+
+  test("accepts a non-empty summaryPrompt string", () => {
+    const raw = '{ "summaryPrompt": "Group findings by file; include severity badges." }';
+    expect(parseConfig(raw).summaryPrompt).toBe(
+      "Group findings by file; include severity badges.",
+    );
+  });
+
+  test("rejects an empty summaryPrompt string", () => {
+    // An empty prompt is almost certainly a typo (the user meant to write
+    // something and didn't); bailing loud beats silently ignoring it.
+    expect(() => parseConfig('{ "summaryPrompt": "" }')).toThrow(/summaryPrompt/);
+  });
+
+  test("rejects a non-string summaryPrompt", () => {
+    expect(() => parseConfig('{ "summaryPrompt": 42 }')).toThrow(/summaryPrompt/);
+    expect(() => parseConfig('{ "summaryPrompt": null }')).toThrow(/summaryPrompt/);
+    expect(() => parseConfig('{ "summaryPrompt": ["a", "b"] }')).toThrow(/summaryPrompt/);
+  });
 });

@@ -102,15 +102,13 @@ export function parseFlags(args: string[], spec: FlagSpec): ParsedFlags {
 // ---------------------------------------------------------------------------
 
 export type ParsedAttestArgs =
-  | { ok: true; skill: string; findings?: string }
+  | { ok: true; skill: string; findings?: string; summary?: string }
   | { ok: false; error: string };
 
 export function parseAttestArgs(args: string[]): ParsedAttestArgs {
-  const result = parseFlags(args, { skill: "required", findings: "optional" });
+  const result = parseFlags(args, { skill: "required", findings: "optional", summary: "optional" });
   if (!result.ok) return { ok: false, error: result.error };
-  // `skill` is guaranteed defined because spec marks it required and
-  // parseFlags returns an error otherwise. The `!` is safe here.
-  return { ok: true, skill: result.values.skill!, findings: result.values.findings };
+  return { ok: true, skill: result.values.skill!, findings: result.values.findings, summary: result.values.summary };
 }
 
 export type ParsedInitArgs =

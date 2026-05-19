@@ -5,6 +5,17 @@ All notable changes to `skilled-pr` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/Demianeen/skilled-pr/compare/v0.2.0...v0.3.0) (2026-05-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* skilled-pr now requires Node.js 22+ instead of Bun. Users who installed via `bun add -g skilled-pr` and don't have Node on PATH will get "command not found" after upgrading. Reinstall via `npm i -g skilled-pr` (or `pnpm add -g skilled-pr`) on a system with Node 22+. Runtime behaviour and CLI surface are unchanged.
+
+### Build System
+
+* migrate from Bun to Node + pnpm + vitest + tsup ([#5](https://github.com/Demianeen/skilled-pr/issues/5)) ([0b84e61](https://github.com/Demianeen/skilled-pr/commit/0b84e614980e5b3e959a39535b13d82ff9583583))
+
 ## [0.2.0](https://github.com/Demianeen/skilled-pr/compare/v0.1.0...v0.2.0) (2026-05-17)
 
 

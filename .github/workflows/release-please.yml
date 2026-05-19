@@ -43,10 +43,13 @@ jobs:
 
       # pnpm/action-setup must come BEFORE actions/setup-node so the latter
       # can find `pnpm` on PATH to enable its pnpm-store cache.
+      # Version is read from package.json's `packageManager` field
+      # (pnpm@9.0.0). Specifying `version:` here in addition causes
+      # pnpm/action-setup@v4 to refuse with ERR_PNPM_BAD_PM_VERSION as of
+      # late 2025; the action treats duplicate version sources as a
+      # configuration error to prevent silent drift.
       - uses: pnpm/action-setup@v4
         if: ${{ steps.release.outputs.release_created }}
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         if: ${{ steps.release.outputs.release_created }}

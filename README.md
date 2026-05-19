@@ -28,14 +28,16 @@ You invoke /review in Claude Code
         │
         ▼
 PostToolUse hook fires → injects system reminder:
-"after this review, write findings.json and run skilled-pr attest"
+"after this review, write findings.json (+ optionally summary.md)
+ and run skilled-pr attest"
         │
         ▼
-Model performs the review, writes .review/findings-review.json,
-runs `skilled-pr attest --skill review --findings ...`
+Model performs the review, writes .review/findings-review.json
+(plus .review/summary-review.md if summaryPrompt is configured),
+runs `skilled-pr attest --skill review --findings ... [--summary ...]`
         │
         ▼
-attest posts: inline PR comments + summary comment + status check
+attest posts: one per-skill summary comment + status check
         │
         ▼
 Branch protection requires the status check → PR is gated
@@ -43,9 +45,9 @@ Branch protection requires the status check → PR is gated
 
 Three moving pieces, no servers:
 
-1. **`.skilledpr.jsonc`** — per-repo config listing required skills + fail threshold.
+1. **`.skilledpr.jsonc`** — per-repo config listing required skills + fail threshold + optional summary prompt.
 2. **A Claude Code hook** — installed by `skilled-pr init`. Reads stdin, injects an attestation reminder when a required skill is invoked.
-3. **`skilled-pr attest`** — posts findings as inline PR comments (deduped by fingerprint), a per-skill summary comment, and a `success`/`failure` commit status.
+3. **`skilled-pr attest`** — posts a per-skill summary comment (PATCH-updated in place on re-runs via an artifact marker) and a `success`/`failure` commit status. No inline-per-line noise.
 
 The hook is the key insight: when the agent doing the review is also the agent posting the attestation, you can't fake the review having happened.
 
@@ -91,10 +93,23 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   "statusName": "Skilled PR",
 
   // When to block the PR based on finding severity:
-  //   "error"   — block if any finding has severity "error" (default)
-  //   "warning" — block on either "error" or "warning"
-  //   "none"    — always succeed if the skill attested (advisory mode)
-  "failOn": "error"
+  //   "error"   - block if any finding has severity "error" (default)
+  //   "warning" - block on either "error" or "warning"
+  //   "none"    - always succeed if the skill attested (advisory mode)
+  "failOn": "error",
+
+  // OPTIONAL. When set, the hook reminder asks the skill to render
+  // `.review/summary-<skill>.md` itself, following this prompt. attest
+  // posts the rendered summary verbatim as the PR's artifact comment
+  // (instead of the built-in severity-grouped default).
+  //
+  // Useful when different skills need different summary formats - a
+  // typo-check skill emitting a 'file:line: typo -> fix' table, vs a
+  // security-review skill embedding CVE references and threat scenarios.
+  // The calling skill already knows its domain; one hardcoded template
+  // can't serve all of them.
+  //
+  // "summaryPrompt": "Group findings by file. For each include a severity badge, file:line, and a one-line fix suggestion. Add a 'Why this matters' callout for severity=error."
 }
 ```
 
@@ -115,13 +130,14 @@ Want to write your own? It's ~25 lines of markdown — see [docs/SKILL_AUTHORING
 
 ## What you see on a PR
 
-For each required skill, three things post:
+For each required skill, two things post:
 
-1. **Inline comments** for each finding — file:line specific, with severity badge and an optional suggested fix block.
-2. **A summary comment** at the PR conversation level — one per skill, showing finding count by severity and whether the gate is blocked. Updated on each re-attestation.
-3. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
+1. **A summary comment** at the PR conversation level — one per skill, showing the finding count by severity, whether the gate is blocked, and each finding as a collapsible `<details>` section (severity badge + file:line + title in the summary; body + suggestion expanded on click). When `summaryPrompt` is configured, the skill renders this body itself in whatever format suits the domain (a typo-check skill's summary looks nothing like a security-review skill's). Updated in place on each re-attestation.
+2. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
 
-Re-running `attest` on the same SHA is idempotent: fingerprints dedupe inline comments, the summary comment is PATCH-updated in place, status is replaced.
+Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-updated in place via an HTML marker (`<!-- skilled-pr:artifact:<skill> -->`); the status check is replaced.
+
+> Note on inline comments: earlier versions of skilled-pr posted one inline PR comment per finding. We dropped that path in favour of the consolidated summary. The reviewer is already sitting in Claude Code with full session context; the file:line speech-bubble UX duplicated information they had. On PRs requiring multiple review skills, inline comments easily ran past 30 per PR, making the conversation tab unreadable. One artifact comment per skill is now the sole PR-visible surface.
 
 ## Documentation
 

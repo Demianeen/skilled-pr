@@ -15,10 +15,10 @@ That's it. No SDK, no API, no required dependencies. Just instructions in markdo
 When the user adds your skill to `requiredSkills` in `.skilledpr.jsonc` and invokes it:
 
 1. Claude Code loads your `SKILL.md` into context.
-2. skilled-pr's PostToolUse hook fires, injects a system reminder telling the model: "after this review, write findings to `.review/findings-<slug>.json` and run `skilled-pr attest`."
-3. Your skill instructs the model on HOW to review (the actual review behaviour — what to look for, how to organize output).
-4. The model performs the review per your instructions, writes findings.json, runs attest.
-5. attest validates the findings against the schema, posts them as inline PR comments, posts the per-skill artifact summary comment, and posts the status check.
+2. skilled-pr's PostToolUse hook fires, injects a system reminder telling the model: "after this review, write findings to `.review/findings-<slug>.json` and run `skilled-pr attest`." If the user's `.skilledpr.jsonc` includes a `summaryPrompt`, the reminder also asks the model to write `.review/summary-<slug>.md` following that prompt.
+3. Your skill instructs the model on HOW to review (the actual review behaviour - what to look for, how to organize output).
+4. The model performs the review per your instructions, writes findings.json (and optionally summary.md), runs attest.
+5. attest validates the findings against the schema, PATCH-updates one per-skill artifact summary comment on the PR (using the rendered summary if provided, otherwise auto-rendering from findings.json), and posts the status check that gates the merge.
 
 You don't need to know any of this when authoring. Just describe what your skill should review — skilled-pr handles the GitHub integration.
 
@@ -81,7 +81,7 @@ If you want your skill to work independently of skilled-pr (e.g., as a standalon
 These aren't required, but skills that follow them feel "professional":
 
 - **Confidence-gate your findings.** Don't post low-confidence guesses as `error`. Use `info` for "pattern looks suspicious but might be fine," `warning` for "high confidence quality issue," `error` for "verified bug."
-- **Cite file:line, not just file.** GitHub's inline comment UI shows file:line — having it in the body too makes the comment scannable.
+- **Cite file:line, not just file.** The artifact comment's per-finding `<summary>` shows `path:line` - putting it in the title field too just duplicates it. Use the body for "why" and concrete context.
 - **Suggestions over scolding.** Include a `suggestion` field when you can name a concrete fix. "X is wrong, do Y" beats "X is wrong."
 - **Domain prefix the title.** A skill called `security-review` putting "SQL injection" in the title is fine. A general skill putting "[security] SQL injection" makes its category visible at a glance.
 
@@ -115,9 +115,9 @@ findings JSON before running for real, eyeball it against:
 - `src/findings.ts` in the source repo - the actual Zod schema
 
 A useful end-to-end test is a throwaway PR in a sandbox repo: open it,
-invoke your skill, and watch the inline comments + status check populate.
-If the JSON is malformed, `attest` exits non-zero with a clear parse
-error pointing at the bad field.
+invoke your skill, and watch the artifact summary comment + status check
+populate. If the JSON is malformed, `attest` exits non-zero with a clear
+parse error pointing at the bad field.
 
 > Want a programmatic `parseFindings` import? Open an issue - we can
 > expose `skilled-pr/findings` as a separate subpath export.

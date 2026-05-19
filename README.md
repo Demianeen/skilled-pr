@@ -28,13 +28,13 @@ You invoke /review in Claude Code
         │
         ▼
 PostToolUse hook fires → injects system reminder:
-"after this review, write findings.json (+ optionally summary.md)
+"after this review, write findings.json + summary.md
  and run skilled-pr attest"
         │
         ▼
 Model performs the review, writes .review/findings-review.json
-(plus .review/summary-review.md if summaryPrompt is configured),
-runs `skilled-pr attest --skill review --findings ... [--summary ...]`
+and .review/summary-review.md (rendered per your summaryPrompt),
+runs `skilled-pr attest --skill review --findings ... --summary ...`
         │
         ▼
 attest posts: one per-skill summary comment + status check
@@ -45,9 +45,9 @@ Branch protection requires the status check → PR is gated
 
 Three moving pieces, no servers:
 
-1. **`.skilledpr.jsonc`** — per-repo config listing required skills + fail threshold + optional summary prompt.
-2. **A Claude Code hook** — installed by `skilled-pr init`. Reads stdin, injects an attestation reminder when a required skill is invoked.
-3. **`skilled-pr attest`** — posts a per-skill summary comment (PATCH-updated in place on re-runs via an artifact marker) and a `success`/`failure` commit status. No inline-per-line noise.
+1. **`.skilledpr.jsonc`** — per-repo config: required skills, fail threshold, and the **summary prompt** that tells each skill how to render its PR comment. `init` writes a sensible default; you tune it per project.
+2. **A Claude Code hook** — installed by `skilled-pr init`. Reads stdin, injects an attestation reminder when a required skill is invoked. The reminder embeds the summary prompt verbatim.
+3. **`skilled-pr attest`** — takes the skill-rendered summary, posts it as one per-skill PR comment (PATCH-updated in place on re-runs via an artifact marker), and posts a `success`/`failure` commit status. No inline-per-line noise; no template engine.
 
 The hook is the key insight: when the agent doing the review is also the agent posting the attestation, you can't fake the review having happened.
 
@@ -98,18 +98,16 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   //   "none"    - always succeed if the skill attested (advisory mode)
   "failOn": "error",
 
-  // OPTIONAL. When set, the hook reminder asks the skill to render
-  // `.review/summary-<skill>.md` itself, following this prompt. attest
-  // posts the rendered summary verbatim as the PR's artifact comment
-  // (instead of the built-in severity-grouped default).
+  // REQUIRED. Embedded in the hook reminder; tells the skill how to render
+  // `.review/summary-<skill>.md`. The file becomes the PR's artifact
+  // comment verbatim. `init` writes a sensible default; tune per project.
   //
-  // Useful when different skills need different summary formats - a
+  // Useful when different skills want different summary formats - a
   // typo-check skill emitting a 'file:line: typo -> fix' table, vs a
   // security-review skill embedding CVE references and threat scenarios.
   // The calling skill already knows its domain; one hardcoded template
   // can't serve all of them.
-  //
-  // "summaryPrompt": "Group findings by file. For each include a severity badge, file:line, and a one-line fix suggestion. Add a 'Why this matters' callout for severity=error."
+  "summaryPrompt": "Render a markdown summary of the review for posting as a GitHub PR comment. ..."
 }
 ```
 
@@ -132,12 +130,12 @@ Want to write your own? It's ~25 lines of markdown — see [docs/SKILL_AUTHORING
 
 For each required skill, two things post:
 
-1. **A summary comment** at the PR conversation level — one per skill, showing the finding count by severity, whether the gate is blocked, and each finding as a collapsible `<details>` section (severity badge + file:line + title in the summary; body + suggestion expanded on click). When `summaryPrompt` is configured, the skill renders this body itself in whatever format suits the domain (a typo-check skill's summary looks nothing like a security-review skill's). Updated in place on each re-attestation.
+1. **A summary comment** at the PR conversation level — one per skill. The skill renders the body itself, following your `summaryPrompt` from `.skilledpr.jsonc`. A typo-check skill's summary looks nothing like a security-review skill's; one transport, many shapes. Updated in place on each re-attestation.
 2. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
 
 Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-updated in place via an HTML marker (`<!-- skilled-pr:artifact:<skill> -->`); the status check is replaced.
 
-> Note on inline comments: earlier versions of skilled-pr posted one inline PR comment per finding. We dropped that path in favour of the consolidated summary. The reviewer is already sitting in Claude Code with full session context; the file:line speech-bubble UX duplicated information they had. On PRs requiring multiple review skills, inline comments easily ran past 30 per PR, making the conversation tab unreadable. One artifact comment per skill is now the sole PR-visible surface.
+> Note on inline comments: earlier versions of skilled-pr posted one inline PR comment per finding. We dropped that path in favour of the consolidated per-skill summary. The reviewer is already sitting in Claude Code with full session context; the file:line speech-bubble UX duplicated information they had. On PRs requiring multiple review skills, inline comments easily ran past 30 per PR, making the conversation tab unreadable. One artifact comment per skill is now the sole PR-visible surface; the per-finding format is whatever the skill chooses to render.
 
 ## Documentation
 

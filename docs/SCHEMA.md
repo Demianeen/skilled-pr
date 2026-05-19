@@ -91,18 +91,24 @@ The CLI exits with non-zero status without posting anything.
 
 ## How the artifact comment is built
 
-`skilled-pr attest --skill <name> --findings <path>` posts (or PATCHes in place) one comment per skill on the PR. Identified by the HTML marker `<!-- skilled-pr:artifact:<skill> -->` at the end of the body, which lets future attest runs find and update the same comment.
+`skilled-pr attest --skill <name> --findings <findings.json> --summary <summary.md>` posts (or PATCHes in place) one comment per skill on the PR. The comment body comes from the `--summary` file verbatim, with an HTML marker `<!-- skilled-pr:artifact:<skill> -->` auto-appended so future attest runs can find and update the same comment.
 
-The default body is rendered by `formatArtifactComment` in `src/findings.ts`:
+**skilled-pr does not render the body itself.** The skill renders the summary, following the `summaryPrompt` from `.skilledpr.jsonc`. This is by design: a typo-check skill should emit a `file:line: 'teh' -> 'the'` table, a French-translation skill should show side-by-side phrase diffs, a security-review skill should embed CVE references. One hardcoded template can't serve all of them; the skill already knows its domain.
+
+The `findings.json` array stays the same shape regardless of summary format - it's the input to the status check (`failOn` gating uses severity counts from this array). Findings are the machine-readable record; the summary is the human-readable record.
+
+### Default `summaryPrompt`
+
+`init` writes a default prompt that asks for a header + severity breakdown + per-finding `<details>` blocks. Sensible starting point; tune per project. The default lives in `DEFAULT_SUMMARY_PROMPT` in `src/config.ts` (also rendered into the generated `.skilledpr.jsonc` for direct user editing).
+
+Example output a skill might produce following the default prompt:
 
 ```
 ## ⚠️ `review` reviewed `abc1234`
 
 **Findings:** 3 (1 🔴 error · 2 🟡 warning)
 
-**🚫 This PR is blocked** because `failOn: error` is set and 1 finding has severity at or above that threshold.
-
-### Findings
+The PR is blocked because `failOn: error` is set and 1 finding has severity at or above that threshold.
 
 <details>
 <summary>🔴 <code>src/auth.ts:42</code> SQL injection in login query</summary>
@@ -119,17 +125,20 @@ Use parameterized queries: `db.query('SELECT ... WHERE email = $1', [email])`.
 ...
 </details>
 
-<sub>via `skilled-pr` · updated on each attestation</sub>
 <!-- skilled-pr:artifact:review -->
 ```
 
-Findings are sorted error-first, then warnings, then info; original input order within each tier.
+But the skill is free to ignore that shape and render anything else the prompt asks for - a markdown table, side-by-side diffs, scoped bullet lists, whatever fits the review's nature.
 
-### Per-project custom summaries (`--summary` flag)
+## Missing-artifact behavior
 
-If `.skilledpr.jsonc` includes a `summaryPrompt` field, the hook reminder asks the skill to render its own summary to `.review/summary-<slug>.md` following the prompt. `attest` is then invoked with `--summary <path>` and posts the file's contents verbatim as the artifact body (the marker is auto-appended).
+There's no built-in fallback. If the skill skips the summary, `attest` fails loudly:
 
-This lets each skill render in whatever format suits its domain - a typo-check skill emitting a `file:line: 'teh' -> 'the'` table, a French-translation skill showing side-by-side phrase diffs, a security-review skill embedding CVE references. The `findings.json` array stays the same shape (so the status check still counts severities for `failOn` gating); only the rendered comment changes.
+- `findings.json` missing -> attest exits 1 with a "findings file not found" error.
+- `summary.md` missing -> attest exits 1 with a hint pointing at the hook reminder being stale or the config missing `summaryPrompt`.
+- `summary.md` empty -> attest exits 1; an empty artifact comment is almost always a skill bug.
+
+This is intentional. With one code path and no fallback, "did the review run" reduces to "did attest succeed". Easier to debug, easier to trust.
 
 ## Idempotency
 

@@ -64,14 +64,17 @@ is plug-and-play — you don't run `attest` by hand:
    and injects a system reminder telling the model to:
      - write findings to `.review/findings-<skill-slug>.json` as a JSON array
        (schema in `src/findings.ts`),
-     - if `summaryPrompt` is configured, also write a markdown summary to
-       `.review/summary-<skill-slug>.md` following the prompt, and
-     - run `skilled-pr attest --skill <name> --findings <path> [--summary <path>]`.
-3. `attest` posts one per-skill artifact summary comment (PATCH-updated in
-   place on re-runs via an HTML marker) and the commit-status check against
-   `HEAD`. Severity gates the status state via `failOn` in the config.
-   Inline PR comments were removed; the artifact comment is the sole
-   PR-visible review surface.
+     - write a markdown summary to `.review/summary-<skill-slug>.md`
+       following the project's `summaryPrompt` (embedded verbatim in the
+       reminder), and
+     - run `skilled-pr attest --skill <name> --findings <path> --summary <path>`.
+3. `attest` posts the rendered summary as the per-skill artifact comment
+   (PATCH-updated in place on re-runs via an HTML marker) and posts the
+   commit-status check against `HEAD`. Severity gates the status state via
+   `failOn`. Inline PR comments were removed; the artifact comment is the
+   sole PR-visible review surface, and the skill renders its body itself.
+   skilled-pr has no built-in template - the `summaryPrompt` is the only
+   description of what a PR comment should look like, and it's required.
 
 The status is posted per-SHA. If you push a new commit, the previous
 attestation does **not** carry over — re-invoke the skill (or run `attest`

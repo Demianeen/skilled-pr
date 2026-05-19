@@ -15,10 +15,12 @@ That's it. No SDK, no API, no required dependencies. Just instructions in markdo
 When the user adds your skill to `requiredSkills` in `.skilledpr.jsonc` and invokes it:
 
 1. Claude Code loads your `SKILL.md` into context.
-2. skilled-pr's PostToolUse hook fires, injects a system reminder telling the model: "after this review, write findings to `.review/findings-<slug>.json` and run `skilled-pr attest`." If the user's `.skilledpr.jsonc` includes a `summaryPrompt`, the reminder also asks the model to write `.review/summary-<slug>.md` following that prompt.
+2. skilled-pr's PostToolUse hook fires, injects a system reminder telling the model: "after this review, write findings to `.review/findings-<slug>.json` AND write a markdown summary to `.review/summary-<slug>.md` following this project's `summaryPrompt` (embedded verbatim in the reminder), then run `skilled-pr attest --skill ... --findings ... --summary ...`."
 3. Your skill instructs the model on HOW to review (the actual review behaviour - what to look for, how to organize output).
-4. The model performs the review per your instructions, writes findings.json (and optionally summary.md), runs attest.
-5. attest validates the findings against the schema, PATCH-updates one per-skill artifact summary comment on the PR (using the rendered summary if provided, otherwise auto-rendering from findings.json), and posts the status check that gates the merge.
+4. The model performs the review per your instructions, writes findings.json AND summary.md, runs attest.
+5. attest validates the findings against the schema, PATCH-updates the per-skill artifact summary comment on the PR with the rendered summary verbatim, and posts the status check that gates the merge.
+
+Note: the `summaryPrompt` is per-project (in the user's `.skilledpr.jsonc`), not per-skill. Your skill produces structured findings; the project decides what the user-facing summary looks like. This means one skill can ship one canonical review behavior and projects can dress it up differently.
 
 You don't need to know any of this when authoring. Just describe what your skill should review — skilled-pr handles the GitHub integration.
 

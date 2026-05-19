@@ -655,12 +655,36 @@ export async function doctor(args: string[] = []) {
   results.push(configCheck);
 
   // 6. Harness hooks: Claude Code, Codex, or both.
-  //    Policy: report on every harness whose directory exists. If neither
-  //    .claude/ nor .codex/ exists, fall back to checking Claude (preserves
-  //    the historical doctor output for first-time users).
+  //    Policy: always emit one line per harness's hook config, even when
+  //    that harness isn't set up in this repo. Silent skipping leaves the
+  //    user unable to distinguish "I don't use this harness" from "doctor
+  //    has a bug" or "this version doesn't check that harness." The skip
+  //    status (with a fix hint) signals "we know how to check this, but
+  //    you don't appear to use it; here's what to do if you do."
+  //
+  //    The binary checks (codex installed, etc.) stay conditional on the
+  //    dir existing - no value in reporting whether `codex` is on PATH for
+  //    a user who only runs Claude Code, and vice versa.
+  //
+  //    Back-compat: when NEITHER .claude/ nor .codex/ exists, default to
+  //    actually running the Claude hooks check (preserves the historical
+  //    "run init" message first-time users got before Codex existed).
   const claudePresent = existsSync(".claude");
   const codexPresent = existsSync(".codex");
-  if (claudePresent || (!claudePresent && !codexPresent)) {
+  if (claudePresent) {
+    const settings = await readFileOrNull(".claude/settings.json");
+    results.push(classifyClaudeHooks(settings));
+  } else if (codexPresent) {
+    // Codex-only repo: report Claude as skipped instead of failing.
+    results.push({
+      name: "Claude Code hooks",
+      status: "skip",
+      detail: "no .claude/ in this repo (Claude Code is optional)",
+      fix: "If you use Claude Code: skilled-pr init --for claude",
+      why: WHY_HOOKS,
+    });
+  } else {
+    // Neither harness present: back-compat default for first-time users.
     const settings = await readFileOrNull(".claude/settings.json");
     results.push(classifyClaudeHooks(settings));
   }
@@ -673,6 +697,17 @@ export async function doctor(args: string[] = []) {
 
     const codexSettings = await readFileOrNull(".codex/hooks.json");
     results.push(classifyCodexHooks(codexSettings));
+  } else {
+    // Codex isn't set up here. Surface a skip line so the user knows we
+    // would check it; the fix hint nudges them toward init if they DO
+    // want Codex coverage.
+    results.push({
+      name: "Codex hooks",
+      status: "skip",
+      detail: "no .codex/ in this repo (Codex is optional)",
+      fix: "If you use Codex: skilled-pr init --for codex",
+      why: WHY_CODEX_HOOKS,
+    });
   }
 
   // 7. Branch protection (only if we have a GitHub remote AND gh is authed)

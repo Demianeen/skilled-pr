@@ -6,9 +6,18 @@ export interface SkilledPRConfig {
   requiredSkills: string[];
   statusName: string;
   failOn: FailOn;
+  /**
+   * Optional per-project prompt embedded in the PostToolUse hook reminder.
+   * Tells the skill how to render `.review/summary-<skill>.md`, which `attest`
+   * posts verbatim as the per-skill artifact comment (instead of the
+   * built-in severity-grouped default). Lets a typo-check skill emit a
+   * different format than a security-review skill while sharing the same
+   * attestation transport.
+   */
+  summaryPrompt?: string;
 }
 
-const DEFAULT_CONFIG: SkilledPRConfig = {
+const DEFAULT_CONFIG: Omit<SkilledPRConfig, "summaryPrompt"> = {
   requiredSkills: ["review"],
   statusName: "Skilled PR",
   failOn: "error",
@@ -48,12 +57,24 @@ export function parseConfig(raw: string): SkilledPRConfig {
     );
   }
 
-  const merged = { ...DEFAULT_CONFIG, ...parsed };
+  const merged = { ...DEFAULT_CONFIG, ...parsed } as SkilledPRConfig;
 
   if (merged.failOn !== "error" && merged.failOn !== "warning" && merged.failOn !== "none") {
     throw new Error(
       `Invalid .skilledpr.jsonc: "failOn" must be "error", "warning", or "none" (got ${JSON.stringify(merged.failOn)})`,
     );
+  }
+
+  // summaryPrompt is optional but if present must be a non-empty string.
+  // Anything else (number, object, empty string) is a misconfiguration;
+  // bail early so the user sees the typo instead of attest silently
+  // ignoring it.
+  if (merged.summaryPrompt !== undefined) {
+    if (typeof merged.summaryPrompt !== "string" || merged.summaryPrompt.length === 0) {
+      throw new Error(
+        `Invalid .skilledpr.jsonc: "summaryPrompt" must be a non-empty string when present (got ${JSON.stringify(merged.summaryPrompt)})`,
+      );
+    }
   }
 
   return merged;
@@ -73,10 +94,19 @@ export function generateDefaultConfig(): string {
   "statusName": "Skilled PR",
 
   // When to fail the check based on finding severity:
-  //   "error"   — fail if any finding has severity "error" (default)
-  //   "warning" — fail on either "error" or "warning"
-  //   "none"    — always succeed if the skill attested (advisory mode)
+  //   "error"   - fail if any finding has severity "error" (default)
+  //   "warning" - fail on either "error" or "warning"
+  //   "none"    - always succeed if the skill attested (advisory mode)
   "failOn": "error"
+
+  // OPTIONAL: a prompt embedded in the hook reminder telling the skill how
+  // to format \`.review/summary-<skill>.md\`. The summary becomes the PR's
+  // artifact comment (replacing the built-in severity-grouped default).
+  // Useful when different skills want different summary formats - e.g. a
+  // typo-check skill emitting a "file:line: typo -> fix" table vs a
+  // security-review skill embedding CVE references and threat scenarios.
+  //
+  // "summaryPrompt": "Group findings by file. For each finding include a severity badge, file:line, and a 1-line fix suggestion. Add a 'Why this matters' callout for severity=error findings."
 }
 `;
 }

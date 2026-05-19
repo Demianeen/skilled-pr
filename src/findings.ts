@@ -143,14 +143,95 @@ export function formatArtifactComment(
       );
     }
     parts.push("");
-    parts.push("See inline comments on the PR for details on each finding.");
+
+    // Render each finding inline as a collapsible <details> section.
+    // Inline PR comments were dropped (each finding used to anchor at
+    // file:line); the artifact comment is now the sole PR-visible review
+    // artifact, so detail lives here. Ordered: errors first, then
+    // warnings, then info; original input order within each tier.
+    const ordered = orderFindingsForArtifact(findings);
+    parts.push("### Findings");
+    parts.push("");
+    for (const f of ordered) {
+      parts.push(renderFindingDetails(f));
+      parts.push("");
+    }
   }
 
-  parts.push("");
   parts.push(`<sub>via \`skilled-pr\` · updated on each attestation</sub>`);
-  parts.push(`<!-- skilled-pr:artifact:${skillName} -->`);
+  parts.push("");
+  parts.push(artifactMarker(skillName));
 
   return parts.join("\n");
+}
+
+/**
+ * Stable ordering for the artifact body: most-severe-first, original input
+ * order within each tier. Lets the reviewer scan blockers without scrolling
+ * past noise.
+ */
+function orderFindingsForArtifact(findings: Finding[]): Finding[] {
+  const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
+  return [...findings].sort((a, b) => rank[a.severity] - rank[b.severity]);
+}
+
+const SEVERITY_BADGE: Record<Severity, string> = {
+  error: "🔴",
+  warning: "🟡",
+  info: "🔵",
+};
+
+/**
+ * One finding rendered as a `<details>` block. Summary stays scannable
+ * (badge + path:line + title); body content is hidden until clicked.
+ * Keeps the PR conversation tab short even when there are 20+ findings.
+ */
+function renderFindingDetails(f: Finding): string {
+  const lines: string[] = [];
+  lines.push("<details>");
+  lines.push(
+    `<summary>${SEVERITY_BADGE[f.severity]} <code>${f.path}:${f.line}</code> ${escapeForSummary(f.title)}</summary>`,
+  );
+  lines.push("");
+  lines.push(f.body);
+  if (f.suggestion) {
+    lines.push("");
+    lines.push("**Suggestion:**");
+    lines.push(f.suggestion);
+  }
+  lines.push("");
+  lines.push("</details>");
+  return lines.join("\n");
+}
+
+/**
+ * Conservative escape for content placed inside `<summary>...</summary>`.
+ * GitHub's flavored markdown lets us mix HTML and markdown; the only thing
+ * that breaks a summary is a literal `<` starting an HTML tag, so we
+ * neutralise just that.
+ */
+function escapeForSummary(s: string): string {
+  return s.replace(/</g, "&lt;");
+}
+
+/** HTML marker the artifact comment carries so future attest runs can PATCH-in-place. */
+export function artifactMarker(skillName: string): string {
+  return `<!-- skilled-pr:artifact:${skillName} -->`;
+}
+
+/**
+ * Wrap an arbitrary markdown body with the artifact marker so a future
+ * `attest` run can find and PATCH-update it. Used for user-provided
+ * summaries that may not include the marker themselves. Idempotent:
+ * if the body already contains the marker (e.g. the user's template
+ * inlines it), no second copy is appended.
+ */
+export function wrapWithArtifactMarker(body: string, skillName: string): string {
+  const marker = artifactMarker(skillName);
+  if (body.includes(marker)) return body;
+  // Trim a trailing newline so the marker sits one blank line below content.
+  const trimmed = body.replace(/\n+$/, "");
+  return `${trimmed}\n\n${marker}\n`;
 }
 
 /**

@@ -1,5 +1,5 @@
 export type ParsedAttestArgs =
-  | { ok: true; skill: string; findings?: string }
+  | { ok: true; skill: string; findings?: string; summary?: string }
   | { ok: false; error: string };
 
 export function parseAttestArgs(args: string[]): ParsedAttestArgs {
@@ -9,7 +9,18 @@ export function parseAttestArgs(args: string[]): ParsedAttestArgs {
   const findings = readOptional(args, "--findings");
   if (!findings.ok) return { ok: false, error: `--findings: ${findings.error}` };
 
-  return { ok: true, skill: skill.value, findings: findings.value };
+  // --summary <path>: optional markdown file the skill rendered using the
+  // per-project summaryPrompt. Posted verbatim as the PR's artifact comment.
+  // Absent means "use the built-in severity-grouped default".
+  const summary = readOptional(args, "--summary");
+  if (!summary.ok) return { ok: false, error: `--summary: ${summary.error}` };
+
+  return {
+    ok: true,
+    skill: skill.value,
+    findings: findings.value,
+    summary: summary.value,
+  };
 }
 
 type Required_ = { ok: true; value: string } | { ok: false; error: string };

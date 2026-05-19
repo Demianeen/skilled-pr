@@ -14,6 +14,7 @@ import {
   buildStatusDescription,
   formatArtifactComment,
   extractArtifactSkillName,
+  wrapWithArtifactMarker,
   type Finding,
 } from "./findings";
 
@@ -23,11 +24,11 @@ export async function attest(args: string[]) {
   const parsed = parseAttestArgs(args);
   if (!parsed.ok) {
     console.error(
-      `Usage: skilled-pr attest --skill <name> [--findings <file>]\n  (${parsed.error})`,
+      `Usage: skilled-pr attest --skill <name> [--findings <file>] [--summary <file>]\n  (${parsed.error})`,
     );
     process.exit(1);
   }
-  const { skill: skillName, findings: findingsPath } = parsed;
+  const { skill: skillName, findings: findingsPath, summary: summaryPath } = parsed;
 
   const config = await loadConfig();
   if (!config) {
@@ -56,9 +57,14 @@ export async function attest(args: string[]) {
   // and offer push recovery. Users who want silent skip in passive workflows
   // (e.g. post-commit hooks) can wrap the call: `skilled-pr attest ... || true`.
   if (!isCommitPushed(sha)) {
-    const retry = findingsPath
-      ? `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`
-      : `skilled-pr attest --skill ${skillName}`;
+    const retryFlags = [
+      `--skill ${skillName}`,
+      findingsPath ? `--findings ${findingsPath}` : null,
+      summaryPath ? `--summary ${summaryPath}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const retry = `skilled-pr attest ${retryFlags}`;
     console.error(
       `Skilled PR: HEAD (${sha.slice(0, 7)}) is not pushed to ${remote.owner}/${remote.repo}. ` +
       `GitHub rejects status posts for unknown SHAs.\n\n` +
@@ -71,6 +77,11 @@ export async function attest(args: string[]) {
   // --- Findings ------------------------------------------------------------
 
   const findings = findingsPath ? await loadFindings(findingsPath) : null;
+  // Optional skill-rendered summary. When provided, replaces the built-in
+  // artifact comment body verbatim (with the artifact marker auto-appended
+  // so future runs can find and PATCH this same comment). When absent we
+  // fall back to formatArtifactComment's auto-render from findings.json.
+  const summaryOverride = summaryPath ? loadSummary(summaryPath) : null;
 
   if (findings !== null) {
     const prNumber = getPullRequestForSha(remote, sha);
@@ -91,6 +102,7 @@ export async function attest(args: string[]) {
         findings,
         skillName,
         config.failOn,
+        summaryOverride,
       );
       const artifactNote =
         artifactResult === "created"
@@ -98,8 +110,9 @@ export async function attest(args: string[]) {
           : artifactResult === "updated"
             ? "artifact updated"
             : "artifact post failed";
+      const summaryNote = summaryOverride ? " (using --summary override)" : "";
       console.log(
-        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote}).`,
+        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote})${summaryNote}.`,
       );
     }
   }
@@ -147,6 +160,31 @@ async function loadFindings(path: string): Promise<Finding[]> {
     console.error(`Skilled PR: invalid findings file: ${(err as Error).message}`);
     process.exit(1);
   }
+}
+
+/**
+ * Read the optional --summary file. Missing-file is an error (the skill
+ * was told to write it; absence means the skill broke or the path is wrong).
+ * Empty-file is also an error - an empty artifact comment is useless and
+ * almost certainly a skill bug. Bail loudly in both cases so the model
+ * notices and can recover instead of silently posting a blank comment.
+ */
+function loadSummary(path: string): string {
+  if (!existsSync(path)) {
+    console.error(
+      `Skilled PR: summary file not found: ${path}. ` +
+        `The hook reminder asked the skill to write this file; if your skill ` +
+        `doesn't produce summaries yet, remove the \`summaryPrompt\` from .skilledpr.jsonc ` +
+        `or drop the --summary flag.`,
+    );
+    process.exit(1);
+  }
+  const raw = readFileSync(path, "utf8").trim();
+  if (raw.length === 0) {
+    console.error(`Skilled PR: summary file is empty: ${path}.`);
+    process.exit(1);
+  }
+  return raw;
 }
 
 function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null {
@@ -208,8 +246,14 @@ function postOrUpdateArtifactComment(
   findings: Finding[],
   skillName: string,
   failOn: SkilledPRConfig["failOn"],
+  summaryOverride: string | null,
 ): "created" | "updated" | "failed" {
-  const body = formatArtifactComment(skillName, sha, findings, failOn);
+  // When a skill-rendered summary is provided, use it verbatim and just
+  // append the artifact marker so future runs find this same comment for
+  // PATCH-in-place updates. Otherwise auto-render from findings.json.
+  const body = summaryOverride
+    ? wrapWithArtifactMarker(summaryOverride, skillName)
+    : formatArtifactComment(skillName, sha, findings, failOn);
   const existingId = findExistingArtifactComment(remote, prNumber, skillName);
 
   const payload = JSON.stringify({ body });

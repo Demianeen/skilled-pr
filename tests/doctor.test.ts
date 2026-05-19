@@ -6,6 +6,7 @@ import {
   classifyGitHubRemote,
   classifySkilledPRConfig,
   classifyClaudeHooks,
+  classifyCodexVersion,
   classifyCodexHooks,
   classifyBranchProtection,
   formatCheck,
@@ -282,6 +283,40 @@ describe("classifyClaudeHooks", () => {
     }`;
     const r = classifyClaudeHooks(settings);
     expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyCodexVersion
+// ---------------------------------------------------------------------------
+
+describe("classifyCodexVersion", () => {
+  test("null stdout (binary missing) -> fail with install hint", () => {
+    const r = classifyCodexVersion(null);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toBe("not found on PATH");
+    expect(r.fix).toContain("Install Codex CLI");
+  });
+
+  test("any non-empty version line -> pass with stdout verbatim", () => {
+    // Codex's --version output format is not stable across builds, so we
+    // accept whatever it prints (parsing for a specific pattern would
+    // false-fail when Codex changes its banner).
+    const r = classifyCodexVersion("codex 0.42.1 (commit abc123)\nhttps://openai.com/codex\n");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe("codex 0.42.1 (commit abc123)");
+  });
+
+  test("bare semver output -> pass (forward-compat)", () => {
+    const r = classifyCodexVersion("0.42.1\n");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe("0.42.1");
+  });
+
+  test("empty / whitespace-only stdout -> warn", () => {
+    const r = classifyCodexVersion("\n\n  \n");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("empty");
   });
 });
 

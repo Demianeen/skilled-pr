@@ -336,6 +336,41 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
   };
 }
 
+const WHY_CODEX =
+  "Codex's `.codex/hooks.json` only fires when Codex itself is on PATH; without the binary, the hook config is inert and `/review` (or any skill that should attest) silently does nothing. doctor only nags about codex when this repo has a `.codex/` directory; if you don't use Codex, this check is skipped.";
+
+/**
+ * Classify `codex --version` output. Output format is not strictly
+ * standardised (different Codex builds print different things), so we
+ * accept any non-empty stdout as "installed" and report it verbatim
+ * instead of parsing for a specific version pattern.
+ *
+ * Only invoked by the orchestrator when `.codex/` exists in the repo;
+ * users who don't run Codex never see this check.
+ */
+export function classifyCodexVersion(stdout: string | null): CheckResult {
+  if (stdout === null) {
+    return {
+      name: "codex installed",
+      status: "fail",
+      detail: "not found on PATH",
+      fix: "Install Codex CLI (e.g. `npm install -g @openai/codex`) or remove `.codex/` if you don't use Codex",
+      why: WHY_CODEX,
+    };
+  }
+  const firstLine = stdout.trim().split("\n")[0];
+  if (!firstLine) {
+    return {
+      name: "codex installed",
+      status: "warn",
+      detail: "empty version output",
+      fix: "Verify codex is working: codex --version",
+      why: WHY_CODEX,
+    };
+  }
+  return { name: "codex installed", status: "pass", detail: firstLine, why: WHY_CODEX };
+}
+
 const WHY_CODEX_HOOKS =
   "Codex skills load via progressive disclosure (no Skill tool to match on), so skilled-pr hooks the UserPromptSubmit event instead. When you type a /skill-name, the hook checks it against requiredSkills and injects the attestation reminder. Without this hook, the gate cannot enforce reviews in Codex sessions.";
 
@@ -630,6 +665,12 @@ export async function doctor(args: string[] = []) {
     results.push(classifyClaudeHooks(settings));
   }
   if (codexPresent) {
+    // Run the binary check before the hooks check so failure order matches
+    // the dependency direction: if codex isn't installed, the hook config
+    // never fires regardless of its contents.
+    const codexVersion = tryRun(["codex", "--version"]);
+    results.push(classifyCodexVersion(codexVersion.stdout));
+
     const codexSettings = await readFileOrNull(".codex/hooks.json");
     results.push(classifyCodexHooks(codexSettings));
   }

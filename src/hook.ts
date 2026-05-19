@@ -146,58 +146,44 @@ export function slugifySkill(name: string): string {
 /**
  * Build the attestation-instruction system reminder for a given skill.
  *
- * `summaryPrompt` (optional) is embedded verbatim in the reminder and
- * tells the skill how to render `.review/summary-<slug>.md`. When absent
- * we fall back to a generic instruction; `attest` then auto-renders the
- * artifact comment from findings.json. When present we instruct the skill
- * to write the summary and we add `--summary` to the attest invocation.
+ * `summaryPrompt` is required - it's the only description of what the PR
+ * artifact comment should look like. skilled-pr no longer renders a
+ * fallback, so a missing prompt means the system can't produce a
+ * meaningful summary. The config parser refuses to load a config without
+ * one, so this function can rely on it being present.
  */
-export function buildReminder(skillName: string, summaryPrompt?: string): string {
+export function buildReminder(skillName: string, summaryPrompt: string): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
   const summaryPath = `.review/summary-${slug}.md`;
-  const hasPrompt = typeof summaryPrompt === "string" && summaryPrompt.length > 0;
-  const attestCommand = hasPrompt
-    ? `skilled-pr attest --skill ${skillName} --findings ${findingsPath} --summary ${summaryPath}`
-    : `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`;
+  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath} --summary ${summaryPath}`;
 
   const lines: string[] = [];
   lines.push(
     `This repo gates merges via skilled-pr. The \`${skillName}\` skill you just loaded is listed in \`.skilledpr.jsonc\` as a required review.`,
   );
   lines.push("");
-
-  if (hasPrompt) {
-    lines.push("After completing your review, do these four things in order:");
-    lines.push("");
-    lines.push(
-      `1. Write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
-    );
-    lines.push("");
-    lines.push(
-      `2. Write a markdown summary to \`${summaryPath}\` following this project's summary style. The summary becomes the PR's artifact comment, replacing skilled-pr's built-in severity-grouped default.`,
-    );
-    lines.push("");
-    lines.push(`   Per-project summary instructions:`);
-    lines.push("");
-    // Indent the user's prompt so it visually nests inside the step.
-    for (const line of summaryPrompt!.split("\n")) {
-      lines.push(`   ${line}`);
-    }
-    lines.push("");
-    lines.push(`3. Run: \`${attestCommand}\``);
-  } else {
-    lines.push("After completing your review, do these three things in order:");
-    lines.push("");
-    lines.push(
-      `1. Write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
-    );
-    lines.push("");
-    lines.push(`2. Run: \`${attestCommand}\``);
-  }
+  lines.push("After completing your review, do these four things in order:");
   lines.push("");
   lines.push(
-    `${hasPrompt ? "4" : "3"}. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run \`git push\` and then re-run the attest command. Do NOT push without asking - pushing modifies the remote.`,
+    `1. Write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
+  );
+  lines.push("");
+  lines.push(
+    `2. Write a markdown summary to \`${summaryPath}\` following this project's summary style. The summary becomes the PR's artifact comment verbatim.`,
+  );
+  lines.push("");
+  lines.push("   Per-project summary instructions:");
+  lines.push("");
+  // Indent the user's prompt so it visually nests inside the step.
+  for (const line of summaryPrompt.split("\n")) {
+    lines.push(`   ${line}`);
+  }
+  lines.push("");
+  lines.push(`3. Run: \`${attestCommand}\``);
+  lines.push("");
+  lines.push(
+    "4. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run `git push` and then re-run the attest command. Do NOT push without asking - pushing modifies the remote.",
   );
   lines.push("");
   lines.push(
@@ -210,14 +196,11 @@ export function buildReminder(skillName: string, summaryPrompt?: string): string
  * Format the JSON payload Claude Code expects on stdout to inject an
  * additionalContext system reminder. Returns null when nothing should be
  * injected (caller should write nothing in that case).
- *
- * `summaryPrompt` is forwarded into the reminder; pass `undefined` to opt
- * out of the per-skill custom summary flow.
  */
 export function buildHookOutput(
   event: HookEvent,
   requiredSkills: ReadonlyArray<string>,
-  summaryPrompt?: string,
+  summaryPrompt: string,
 ): string | null {
   const skillName = extractSkillName(event);
   if (skillName === null) return null;

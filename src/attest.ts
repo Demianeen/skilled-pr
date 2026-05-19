@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { run } from "./proc";
-import { loadConfig, type SkilledPRConfig } from "./config";
+import { loadConfig } from "./config";
 import {
   parseGitHubRemote,
   buildStatusContext,
@@ -12,11 +12,11 @@ import {
   parseFindings,
   findingsExceedingThreshold,
   buildStatusDescription,
-  formatArtifactComment,
   extractArtifactSkillName,
   wrapWithArtifactMarker,
   type Finding,
 } from "./findings";
+import type { SkilledPRConfig } from "./config";
 
 type StatusState = "success" | "failure";
 
@@ -76,33 +76,38 @@ export async function attest(args: string[]) {
 
   // --- Findings ------------------------------------------------------------
 
+  // The skill writes findings.json (machine-readable; used for severity
+  // counts on the status check) AND summary-<slug>.md (the rendered
+  // artifact comment body). Both are now part of the contract; missing
+  // either is a hard error because there's no fallback rendering left.
   const findings = findingsPath ? await loadFindings(findingsPath) : null;
-  // Optional skill-rendered summary. When provided, replaces the built-in
-  // artifact comment body verbatim (with the artifact marker auto-appended
-  // so future runs can find and PATCH this same comment). When absent we
-  // fall back to formatArtifactComment's auto-render from findings.json.
-  const summaryOverride = summaryPath ? loadSummary(summaryPath) : null;
+  const summary = summaryPath ? loadSummary(summaryPath) : null;
 
   if (findings !== null) {
+    if (!summary) {
+      console.error(
+        `Skilled PR: attest requires --summary. The skill should render ` +
+          `.review/summary-<slug>.md and pass its path. If your invocation ` +
+          `is missing --summary, the hook reminder is stale - re-invoke the ` +
+          `skill or check .skilledpr.jsonc has summaryPrompt set.`,
+      );
+      process.exit(1);
+    }
     const prNumber = getPullRequestForSha(remote, sha);
     if (prNumber === null) {
       console.warn(
         `Skilled PR: no open PR found for ${sha.slice(0, 7)}. Artifact comment not posted (status check still updates).`,
       );
     } else {
-      // Post (or update) the per-skill artifact summary comment. This is now
-      // the single PR-visible audit trail for the review - inline comments
-      // were dropped in favour of one consolidated summary per skill. The
-      // status check (below) is the gate; the artifact is the evidence.
-      // Failure here is warn-only - the artifact is evidence, not the gate.
+      // Post (or update) the per-skill artifact summary comment. This is
+      // the single PR-visible audit trail for the review; the status
+      // check (below) is the gate; the artifact is the evidence. Failure
+      // here is warn-only - the artifact is evidence, not the gate.
       const artifactResult = postOrUpdateArtifactComment(
         remote,
         prNumber,
-        sha,
-        findings,
+        summary,
         skillName,
-        config.failOn,
-        summaryOverride,
       );
       const artifactNote =
         artifactResult === "created"
@@ -110,9 +115,8 @@ export async function attest(args: string[]) {
           : artifactResult === "updated"
             ? "artifact updated"
             : "artifact post failed";
-      const summaryNote = summaryOverride ? " (using --summary override)" : "";
       console.log(
-        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote})${summaryNote}.`,
+        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote}).`,
       );
     }
   }
@@ -242,18 +246,14 @@ function findExistingArtifactComment(
 function postOrUpdateArtifactComment(
   remote: GitHubRemote,
   prNumber: number,
-  sha: string,
-  findings: Finding[],
+  summary: string,
   skillName: string,
-  failOn: SkilledPRConfig["failOn"],
-  summaryOverride: string | null,
 ): "created" | "updated" | "failed" {
-  // When a skill-rendered summary is provided, use it verbatim and just
-  // append the artifact marker so future runs find this same comment for
-  // PATCH-in-place updates. Otherwise auto-render from findings.json.
-  const body = summaryOverride
-    ? wrapWithArtifactMarker(summaryOverride, skillName)
-    : formatArtifactComment(skillName, sha, findings, failOn);
+  // The summary is posted verbatim; the artifact marker is auto-appended
+  // so future runs find this same comment for PATCH-in-place updates.
+  // skilled-pr no longer renders its own body - the skill produced the
+  // summary following the project's `summaryPrompt`.
+  const body = wrapWithArtifactMarker(summary, skillName);
   const existingId = findExistingArtifactComment(remote, prNumber, skillName);
 
   const payload = JSON.stringify({ body });

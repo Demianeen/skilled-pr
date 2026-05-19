@@ -93,126 +93,17 @@ export { findingsSchemaForPrompt } from "./findings-prompt";
 // ---------------------------------------------------------------------------
 // Artifact summary comment (per-skill, top-level on the PR)
 //
-// The artifact comment is the single per-skill summary that posts on every
-// attest run, even when there are zero findings. It's the only PR-visible
-// evidence of a review beyond the status check: a green check is easy to
-// fabricate or miss; the artifact is the audit trail that says "this skill
-// ran on this commit and produced N findings of severity X/Y/Z."
+// The skill renders the body itself, following the project's `summaryPrompt`
+// (in .skilledpr.jsonc). skilled-pr doesn't have a built-in formatter: the
+// skill knows its own domain (typo-check, security review, French
+// translation, ...) and can produce a summary that suits it. attest just
+// posts the rendered file verbatim (with the artifact marker appended).
 //
 // Posted as a top-level PR comment (issues endpoint), edited (PATCHed) on
 // each re-attestation so there's only ever ONE artifact per skill. Marker
-// `<!-- skilled-pr:artifact:<skill-name> -->` lets us find and update it.
+// `<!-- skilled-pr:artifact:<skill-name> -->` is what lets us find and
+// update the same comment instead of creating a new one each run.
 // ---------------------------------------------------------------------------
-
-/**
- * Render the per-skill artifact summary comment. Always include the marker
- * at end-of-body so subsequent runs can find and edit this comment.
- */
-export function formatArtifactComment(
-  skillName: string,
-  sha: string,
-  findings: Finding[],
-  failOn: FailOn,
-): string {
-  const counts = countBySeverity(findings);
-  const blocking = findingsExceedingThreshold(findings, failOn);
-  const isBlocked = blocking.length > 0;
-  const icon = isBlocked ? "🚫" : findings.length === 0 ? "✅" : "⚠️";
-  const shortSha = sha.slice(0, 7);
-
-  const parts: string[] = [];
-  parts.push(`## ${icon} \`${skillName}\` reviewed \`${shortSha}\``);
-  parts.push("");
-
-  if (findings.length === 0) {
-    parts.push("**Findings:** 0");
-    parts.push("");
-    parts.push("No issues found in the diff.");
-  } else {
-    const breakdown = formatSeverityBreakdown(counts);
-    parts.push(`**Findings:** ${findings.length} (${breakdown})`);
-    parts.push("");
-    if (isBlocked) {
-      const label = blocking.length === 1 ? "finding has" : "findings have";
-      parts.push(
-        `**🚫 This PR is blocked** because \`failOn: ${failOn}\` is set and ${blocking.length} ${label} severity at or above that threshold.`,
-      );
-    } else {
-      parts.push(
-        `Findings exist but none reach the \`failOn: ${failOn}\` threshold; the gate is passing.`,
-      );
-    }
-    parts.push("");
-
-    // Render each finding inline as a collapsible <details> section.
-    // Inline PR comments were dropped (each finding used to anchor at
-    // file:line); the artifact comment is now the sole PR-visible review
-    // artifact, so detail lives here. Ordered: errors first, then
-    // warnings, then info; original input order within each tier.
-    const ordered = orderFindingsForArtifact(findings);
-    parts.push("### Findings");
-    parts.push("");
-    for (const f of ordered) {
-      parts.push(renderFindingDetails(f));
-      parts.push("");
-    }
-  }
-
-  parts.push(`<sub>via \`skilled-pr\` · updated on each attestation</sub>`);
-  parts.push("");
-  parts.push(artifactMarker(skillName));
-
-  return parts.join("\n");
-}
-
-/**
- * Stable ordering for the artifact body: most-severe-first, original input
- * order within each tier. Lets the reviewer scan blockers without scrolling
- * past noise.
- */
-function orderFindingsForArtifact(findings: Finding[]): Finding[] {
-  const rank: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
-  return [...findings].sort((a, b) => rank[a.severity] - rank[b.severity]);
-}
-
-const SEVERITY_BADGE: Record<Severity, string> = {
-  error: "🔴",
-  warning: "🟡",
-  info: "🔵",
-};
-
-/**
- * One finding rendered as a `<details>` block. Summary stays scannable
- * (badge + path:line + title); body content is hidden until clicked.
- * Keeps the PR conversation tab short even when there are 20+ findings.
- */
-function renderFindingDetails(f: Finding): string {
-  const lines: string[] = [];
-  lines.push("<details>");
-  lines.push(
-    `<summary>${SEVERITY_BADGE[f.severity]} <code>${f.path}:${f.line}</code> ${escapeForSummary(f.title)}</summary>`,
-  );
-  lines.push("");
-  lines.push(f.body);
-  if (f.suggestion) {
-    lines.push("");
-    lines.push("**Suggestion:**");
-    lines.push(f.suggestion);
-  }
-  lines.push("");
-  lines.push("</details>");
-  return lines.join("\n");
-}
-
-/**
- * Conservative escape for content placed inside `<summary>...</summary>`.
- * GitHub's flavored markdown lets us mix HTML and markdown; the only thing
- * that breaks a summary is a literal `<` starting an HTML tag, so we
- * neutralise just that.
- */
-function escapeForSummary(s: string): string {
-  return s.replace(/</g, "&lt;");
-}
 
 /** HTML marker the artifact comment carries so future attest runs can PATCH-in-place. */
 export function artifactMarker(skillName: string): string {
@@ -221,10 +112,9 @@ export function artifactMarker(skillName: string): string {
 
 /**
  * Wrap an arbitrary markdown body with the artifact marker so a future
- * `attest` run can find and PATCH-update it. Used for user-provided
- * summaries that may not include the marker themselves. Idempotent:
- * if the body already contains the marker (e.g. the user's template
- * inlines it), no second copy is appended.
+ * `attest` run can find and PATCH-update it. Idempotent: if the body
+ * already contains the marker (e.g. the skill's prompt inlines it), no
+ * second copy is appended.
  */
 export function wrapWithArtifactMarker(body: string, skillName: string): string {
   const marker = artifactMarker(skillName);
@@ -232,19 +122,6 @@ export function wrapWithArtifactMarker(body: string, skillName: string): string 
   // Trim a trailing newline so the marker sits one blank line below content.
   const trimmed = body.replace(/\n+$/, "");
   return `${trimmed}\n\n${marker}\n`;
-}
-
-/**
- * Format the severity breakdown for the comment header, e.g.
- *   "1 🔴 error · 2 🟡 warning · 0 🔵 info"  →  "1 🔴 error · 2 🟡 warning"
- * Zero-count severities are omitted so the header stays scannable.
- */
-function formatSeverityBreakdown(counts: SeverityCounts): string {
-  const parts: string[] = [];
-  if (counts.error > 0) parts.push(`${counts.error} 🔴 error`);
-  if (counts.warning > 0) parts.push(`${counts.warning} 🟡 warning`);
-  if (counts.info > 0) parts.push(`${counts.info} 🔵 info`);
-  return parts.join(" · ");
 }
 
 /**

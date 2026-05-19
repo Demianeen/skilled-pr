@@ -4,7 +4,6 @@ import {
   findingsExceedingThreshold,
   countBySeverity,
   buildStatusDescription,
-  formatArtifactComment,
   extractArtifactSkillName,
   artifactMarker,
   wrapWithArtifactMarker,
@@ -210,150 +209,6 @@ describe("buildStatusDescription", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// formatArtifactComment + extractArtifactSkillName
-// ---------------------------------------------------------------------------
-
-describe("formatArtifactComment", () => {
-  const SHA = "aacd0dd1234567890abcdef0";
-
-  test("zero findings → ✅ icon, 'No issues found' body", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toContain("✅");
-    expect(out).toContain("Findings:** 0");
-    expect(out).toContain("No issues found");
-  });
-
-  test("includes short SHA (7 chars) in the header, not the full one", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toContain("`aacd0dd`");
-    expect(out).not.toContain("aacd0dd1234"); // full SHA shouldn't leak
-  });
-
-  test("includes the skill name verbatim", () => {
-    const out = formatArtifactComment("coderabbit:review", SHA, [], "error");
-    expect(out).toContain("`coderabbit:review`");
-  });
-
-  test("includes the artifact marker at end of body", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toMatch(/<!-- skilled-pr:artifact:review -->\s*$/);
-  });
-
-  test("findings within failOn threshold → ⚠️ icon, 'passing the gate' message", () => {
-    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
-    expect(out).toContain("⚠️");
-    expect(out).toContain("2 🔵 info");
-    expect(out).toContain("none reach the");
-    expect(out).toContain("passing");
-    expect(out).not.toContain("blocked");
-  });
-
-  test("findings exceed failOn threshold → 🚫 icon, blocked message", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error"), fp("info")], "error");
-    expect(out).toContain("🚫");
-    expect(out).toContain("blocked");
-    expect(out).toContain("failOn: error");
-    expect(out).toContain("1 🔴 error");
-    expect(out).toContain("1 🔵 info");
-  });
-
-  test("multiple blocking findings → pluralizes correctly", () => {
-    const out = formatArtifactComment(
-      "review",
-      SHA,
-      [fp("error"), fp("error"), fp("error")],
-      "error",
-    );
-    expect(out).toContain("3 findings have severity");
-  });
-
-  test("single blocking finding → uses 'has' (singular)", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error")], "error");
-    expect(out).toContain("1 finding has severity");
-  });
-
-  test("severity breakdown omits zero-count buckets", () => {
-    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
-    expect(out).toContain("2 🔵 info");
-    expect(out).not.toContain("🔴 error"); // shouldn't list 0-count error
-    expect(out).not.toContain("🟡 warning"); // shouldn't list 0-count warning
-  });
-
-  test("failOn: warning escalates warnings to blocking", () => {
-    const out = formatArtifactComment("review", SHA, [fp("warning")], "warning");
-    expect(out).toContain("🚫");
-    expect(out).toContain("blocked");
-    expect(out).toContain("failOn: warning");
-  });
-
-  test("failOn: none never blocks", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error"), fp("error")], "none");
-    expect(out).not.toContain("🚫");
-    expect(out).not.toContain("blocked");
-    // With failOn:none, the gate is passing even with errors
-    expect(out).toContain("passing");
-  });
-
-  test("body has a Findings section when findings exist", () => {
-    // Inline PR comments were dropped; the artifact comment is now the
-    // sole PR-visible review surface, so finding details must live here.
-    const out = formatArtifactComment("review", SHA, [fp("info")], "error");
-    expect(out).toContain("### Findings");
-    expect(out).toContain("<details>");
-    expect(out).toContain("<summary>");
-  });
-
-  test("body does NOT have a Findings section when zero findings", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).not.toContain("### Findings");
-    expect(out).not.toContain("<details>");
-  });
-
-  test("renders each finding as a collapsible <details> block with path:line + title", () => {
-    const findings: Finding[] = [
-      { path: "src/a.ts", line: 10, severity: "warning", title: "First", body: "B1" },
-      { path: "src/b.ts", line: 20, severity: "error", title: "Second", body: "B2" },
-    ];
-    const out = formatArtifactComment("review", SHA, findings, "error");
-    // Both findings rendered.
-    expect(out).toContain("src/a.ts:10");
-    expect(out).toContain("First");
-    expect(out).toContain("B1");
-    expect(out).toContain("src/b.ts:20");
-    expect(out).toContain("Second");
-    expect(out).toContain("B2");
-    // Errors sorted before warnings.
-    expect(out.indexOf("Second")).toBeLessThan(out.indexOf("First"));
-  });
-
-  test("includes the suggestion when a finding has one", () => {
-    const findings: Finding[] = [
-      {
-        path: "src/a.ts",
-        line: 1,
-        severity: "warning",
-        title: "t",
-        body: "b",
-        suggestion: "do X instead",
-      },
-    ];
-    const out = formatArtifactComment("review", SHA, findings, "error");
-    expect(out).toContain("**Suggestion:**");
-    expect(out).toContain("do X instead");
-  });
-
-  test("escapes literal '<' in finding titles so the summary tag doesn't break", () => {
-    // GitHub renders the summary as raw HTML; an un-escaped `<` would open
-    // a tag and corrupt the rest of the summary text.
-    const findings: Finding[] = [
-      { path: "a.ts", line: 1, severity: "info", title: "fix <script> in body", body: "b" },
-    ];
-    const out = formatArtifactComment("review", SHA, findings, "error");
-    expect(out).toContain("fix &lt;script>");
-    expect(out).not.toContain("fix <script>");
-  });
-});
 
 describe("extractArtifactSkillName", () => {
   test("extracts skill name from a valid artifact marker", () => {
@@ -378,8 +233,11 @@ describe("extractArtifactSkillName", () => {
     expect(extractArtifactSkillName("<!-- skilled-pr:other:foo -->")).toBeNull();
   });
 
-  test("round-trips through formatArtifactComment", () => {
-    const body = formatArtifactComment("plugin:my-skill", "abc1234", [], "error");
+  test("round-trips through wrapWithArtifactMarker", () => {
+    // Use the helper that's actually in the post-summary-required flow:
+    // a skill-rendered body wrapped with the marker should round-trip
+    // back through extractArtifactSkillName, even for namespaced skills.
+    const body = wrapWithArtifactMarker("rendered summary body", "plugin:my-skill");
     expect(extractArtifactSkillName(body)).toBe("plugin:my-skill");
   });
 });

@@ -12,6 +12,21 @@ export function parseAttestArgs(args: string[]): ParsedAttestArgs {
   return { ok: true, skill: skill.value, findings: findings.value };
 }
 
+export type ParsedInitArgs =
+  | { ok: true; forHarness?: string }
+  | { ok: false; error: string };
+
+/**
+ * Parse `skilled-pr init` flags. Today the only flag is `--for`, which
+ * forces hook installation to a specific harness (`claude` | `codex` |
+ * `both`). Default behaviour (no flag) is auto-detection in init.ts.
+ */
+export function parseInitArgs(args: string[]): ParsedInitArgs {
+  const forHarness = readOptional(args, "--for");
+  if (!forHarness.ok) return { ok: false, error: `--for: ${forHarness.error}` };
+  return { ok: true, forHarness: forHarness.value };
+}
+
 type Required_ = { ok: true; value: string } | { ok: false; error: string };
 type Optional_ = { ok: true; value: string | undefined } | { ok: false; error: string };
 

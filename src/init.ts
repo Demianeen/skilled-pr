@@ -1,71 +1,35 @@
 // skilled-pr init
 // Sets up Skilled PR in the current repo.
+//
+// What this does:
+//   1. Creates `.skilledpr.jsonc` with sensible defaults (if missing).
+//   2. Installs hooks into every detected harness (Claude Code, Codex,
+//      both). Detection scans for `.claude/` and `.codex/` directories.
+//      Override with `--for claude|codex|both` for explicit control.
+//   3. Prints next-step guidance.
+//
+// All the per-harness specifics (where the config file lives, what schema it
+// uses, how to merge without clobbering) live in `src/harness/*`. This file
+// is intentionally just orchestration.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
+
+import { parseInitArgs } from "./args";
 import { generateDefaultConfig } from "./config";
+import type { Harness } from "./harness";
+import { detectHarnesses, resolveHarnessOverride } from "./harness";
 
-const SKILLED_PR_HOOK_COMMAND = "skilled-pr hook";
-const CLAUDE_SETTINGS_PATH = ".claude/settings.json";
-
-/** A single hook entry in `.claude/settings.json` (one matcher + one or more commands). */
-interface HookEntry {
-  matcher?: string;
-  hooks: Array<{ type: string; command?: string; [k: string]: unknown }>;
-}
-
-/** Shape of `.claude/settings.json`. We touch only `hooks`; everything else is preserved. */
-export interface ClaudeSettings {
-  hooks?: {
-    [eventName: string]: HookEntry[];
-  };
-  [other: string]: unknown;
-}
-
-/**
- * Add skilled-pr's PostToolUse + UserPromptExpansion hooks to a Claude
- * settings object, preserving all other settings. Idempotent: if an entry
- * already invokes `skilled-pr hook` for an event, it's left alone.
- *
- * Exported pure for tests; `init()` uses it to merge into the user's
- * existing settings.
- */
-export function mergeSkilledPRHooks(existing: ClaudeSettings | null): ClaudeSettings {
-  const hooks: NonNullable<ClaudeSettings["hooks"]> = { ...(existing?.hooks ?? {}) };
-
-  ensureSkilledPRHook(hooks, "PostToolUse", "Skill");
-  ensureSkilledPRHook(hooks, "UserPromptExpansion", "");
-
-  return { ...(existing ?? {}), hooks };
-}
-
-function ensureSkilledPRHook(
-  hooks: NonNullable<ClaudeSettings["hooks"]>,
-  event: string,
-  matcher: string,
-) {
-  const entries = hooks[event] ?? [];
-  const alreadyPresent = entries.some((e) =>
-    e.hooks?.some((h) => h.command === SKILLED_PR_HOOK_COMMAND),
-  );
-  if (alreadyPresent) {
-    hooks[event] = entries;
-    return;
-  }
-  hooks[event] = [
-    ...entries,
-    {
-      matcher,
-      hooks: [{ type: "command", command: SKILLED_PR_HOOK_COMMAND }],
-    },
-  ];
-}
+// Re-export legacy types so existing imports (tests, doctor.ts) keep working
+// while we migrate consumers to the harness module.
+export type { ClaudeSettings } from "./harness";
+export { mergeSkilledPRHooks } from "./harness";
 
 /**
  * Write `contents` to `path`, creating the parent directory if needed.
- * Mirrors `Bun.write`'s auto-mkdir behaviour, which we relied on for
- * `.claude/settings.json` (the `.claude/` dir doesn't exist in a fresh repo).
+ * Both `.claude/` and `.codex/` may not exist in a fresh repo; we mkdir
+ * up-front when missing.
  *
  * Atomic via write-temp + rename: writeFileSync alone is not atomic, so a
  * Ctrl-C or OOM kill mid-write would leave the file half-written. The next
@@ -96,10 +60,79 @@ export function writeFileWithMkdir(path: string, contents: string) {
   }
 }
 
-export async function init() {
-  console.log("Skilled PR — setting up...\n");
+/**
+ * For a single harness: read its existing config (if any), merge skilled-pr's
+ * hook entry, write back. Prints a one-line status to stdout. Returns true if
+ * the file was modified, false if nothing changed (already wired up).
+ *
+ * Refuses (exits 1) when the existing file has JSON syntax errors. See the
+ * inline note below: silent partial-parse merging would destroy user data.
+ */
+function installForHarness(harness: Harness): boolean {
+  let existing: unknown = null;
+  if (existsSync(harness.settingsPath)) {
+    const raw = readFileSync(harness.settingsPath, "utf8");
+    // jsonc-parser tolerates // and /* */ comments some users keep in their
+    // settings; standard JSON.parse would throw on those.
+    //
+    // jsonc-parser does best-effort error recovery by default: bad braces
+    // return a partial parse, no throw. Without explicit error checking we'd
+    // happily merge into the partial result and overwrite the user's file,
+    // silently destroying broken-but-recoverable content. Pass an errors
+    // array and refuse to proceed if parsing failed; the user can fix the
+    // syntax error or rename the file out of the way.
+    const errors: ParseError[] = [];
+    existing = parseJsonc(raw, errors, { allowTrailingComma: true });
+    if (errors.length > 0) {
+      const { error, offset, length } = errors[0];
+      console.error(
+        `Skilled PR: ${harness.settingsPath} has invalid JSON (${printParseErrorCode(error)} at offset ${offset}, length ${length}).\n` +
+          `Refusing to merge; the merge would overwrite your file with a best-effort parse and silently lose data.\n` +
+          `Fix the syntax error in ${harness.settingsPath}, then re-run \`skilled-pr init\`.`,
+      );
+      process.exit(1);
+    }
+  }
 
-  // 1. Create .skilledpr.jsonc
+  const merged = harness.mergeHooks(existing);
+  const before = existing === null ? null : JSON.stringify(existing);
+  const after = JSON.stringify(merged);
+
+  if (before === after) {
+    console.log(`✓ ${harness.settingsPath} already has skilled-pr hooks (${harness.label})`);
+    return false;
+  }
+  writeFileWithMkdir(harness.settingsPath, JSON.stringify(merged, null, 2) + "\n");
+  console.log(`✓ Updated ${harness.settingsPath} with skilled-pr hooks (${harness.label})`);
+  return true;
+}
+
+export async function init(argv: string[] = []) {
+  console.log("Skilled PR: setting up...\n");
+
+  // 1. Parse args (currently only --for).
+  const args = parseInitArgs(argv);
+  if (!args.ok) {
+    console.error(`skilled-pr init: ${args.error}`);
+    process.exit(1);
+  }
+
+  // 2. Pick harness adapters: explicit override > detection > Claude fallback.
+  let harnesses: Harness[];
+  if (args.forHarness) {
+    const resolved = resolveHarnessOverride(args.forHarness);
+    if (!resolved) {
+      console.error(
+        `skilled-pr init: --for must be one of "claude", "codex", "both" (got "${args.forHarness}")`,
+      );
+      process.exit(1);
+    }
+    harnesses = resolved;
+  } else {
+    harnesses = detectHarnesses();
+  }
+
+  // 3. Create .skilledpr.jsonc if missing.
   if (existsSync(".skilledpr.jsonc")) {
     console.log("✓ .skilledpr.jsonc already exists");
   } else {
@@ -107,62 +140,33 @@ export async function init() {
     console.log("✓ Created .skilledpr.jsonc");
   }
 
-  // 2. Install Claude Code hooks. Read-merge-write so we never clobber the
-  //    user's existing settings (formatters, notification hooks, etc.).
-  let existing: ClaudeSettings | null = null;
-  if (existsSync(CLAUDE_SETTINGS_PATH)) {
-    const raw = readFileSync(CLAUDE_SETTINGS_PATH, "utf8");
-    // jsonc-parser tolerates // and /* */ comments some users keep in their
-    // settings; standard JSON.parse would throw.
-    //
-    // jsonc-parser does best-effort error recovery by default: bad braces
-    // return a partial parse, no throw. Without explicit error checking we'd
-    // happily merge into the partial result and overwrite the user's file,
-    // silently destroying broken-but-recoverable content. Pass an errors
-    // array and refuse to proceed if parsing failed - the user can fix the
-    // syntax error or rename the file out of the way.
-    const errors: ParseError[] = [];
-    existing = parseJsonc(raw, errors, { allowTrailingComma: true }) as ClaudeSettings;
-    if (errors.length > 0) {
-      const { error, offset, length } = errors[0];
-      console.error(
-        `Skilled PR: ${CLAUDE_SETTINGS_PATH} has invalid JSON (${printParseErrorCode(error)} at offset ${offset}, length ${length}).\n` +
-          `Refusing to merge - the merge would overwrite your file with a best-effort parse and silently lose data.\n` +
-          `Fix the syntax error in ${CLAUDE_SETTINGS_PATH}, then re-run \`skilled-pr init\`.`,
-      );
-      process.exit(1);
-    }
+  // 4. Install hooks for each selected harness. Each call refuses (exit 1)
+  //    if the target settings file has JSON syntax errors; that's by design,
+  //    silently merging into a partial parse would destroy user data.
+  for (const harness of harnesses) {
+    installForHarness(harness);
   }
 
-  const merged = mergeSkilledPRHooks(existing);
-  const before = existing ? JSON.stringify(existing) : null;
-  const after = JSON.stringify(merged);
-  if (before === after) {
-    console.log(`✓ ${CLAUDE_SETTINGS_PATH} already has skilled-pr hooks`);
-  } else {
-    writeFileWithMkdir(CLAUDE_SETTINGS_PATH, JSON.stringify(merged, null, 2) + "\n");
-    console.log(`✓ Updated ${CLAUDE_SETTINGS_PATH} with skilled-pr hooks`);
-  }
-
-  // 3. Guide branch protection
+  // 5. Next steps. The "your harness here" wording adapts to what we wired up.
+  const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:
 
   1. Make sure \`skilled-pr\` is on your PATH (the hooks invoke it as
      \`skilled-pr hook\`). Install globally with \`npm i -g skilled-pr\`
      (or \`pnpm add -g skilled-pr\`) or pin a per-project install and
-     adjust .claude/settings.json.
+     adjust the hook command.
 
   2. Review \`.skilledpr.jsonc\` and list which review skills must run
      before merge under \`requiredSkills\`.
 
   3. Enable branch protection on GitHub:
-     → Repo Settings → Branches → Branch protection rules
-     → Add rule for your main branch
-     → Check "Require status checks to pass"
-     → Search for "Skilled PR" and add it.
+     -> Repo Settings -> Branches -> Branch protection rules
+     -> Add rule for your main branch
+     -> Check "Require status checks to pass"
+     -> Search for "Skilled PR" and add it.
 
-  4. Invoke a required review skill in Claude Code. Skilled PR will
+  4. Invoke a required review skill in ${harnessList}. Skilled PR will
      automatically inject attestation instructions, and the model will
      write findings + post the GitHub status.
 

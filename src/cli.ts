@@ -21,7 +21,7 @@ switch (command) {
   }
   case "init": {
     const { init } = await import("./init");
-    await init();
+    await init(process.argv.slice(3));
     break;
   }
   case "hook": {
@@ -43,18 +43,23 @@ switch (command) {
     console.log(`skilled-pr v${pkg.version} - Open review transport for AI-native development
 
 Usage:
-  skilled-pr init                    Set up Skilled PR in this repo
+  skilled-pr init [--for claude|codex|both]
+                                     Set up Skilled PR in this repo. By
+                                     default detects which harness is
+                                     present (.claude/ vs .codex/) and
+                                     wires hooks for each. Use --for to
+                                     force.
   skilled-pr attest --skill <name>   Post attestation that a review skill ran
                        [--findings <path>]
   skilled-pr doctor [--why]          Diagnose your local setup. Run this when
-                                     something seems off - checks node, gh,
+                                     something seems off; checks node, gh,
                                      auth, repo state, config, hooks, and
                                      branch protection. Pass --why (or -v)
                                      to see why each check matters.
   skilled-pr enable-gate             Add the Skilled PR status checks to your
-                                     default branch's protection rules. Additive
-                                     - preserves any existing rules.
-  skilled-pr hook                    Internal: Claude Code hook entry point.
+                                     default branch's protection rules.
+                                     Additive; preserves any existing rules.
+  skilled-pr hook                    Internal: harness hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review
                                      skill was just invoked.

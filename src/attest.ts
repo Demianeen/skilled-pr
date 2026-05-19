@@ -10,8 +10,6 @@ import {
 import { parseAttestArgs } from "./args";
 import {
   parseFindings,
-  formatCommentBody,
-  extractFingerprint,
   findingsExceedingThreshold,
   buildStatusDescription,
   formatArtifactComment,
@@ -78,14 +76,14 @@ export async function attest(args: string[]) {
     const prNumber = getPullRequestForSha(remote, sha);
     if (prNumber === null) {
       console.warn(
-        `Skilled PR: no open PR found for ${sha.slice(0, 7)}. ${findings.length} finding(s) not posted.`,
+        `Skilled PR: no open PR found for ${sha.slice(0, 7)}. Artifact comment not posted (status check still updates).`,
       );
     } else {
-      const result = postFindingsAsComments(remote, prNumber, sha, findings, skillName);
-      // Always post (or update) the per-skill artifact summary comment, even
-      // when there are zero findings. That's the whole point — the artifact is
-      // the audit trail that a review actually ran. Failures here warn-only —
-      // the artifact is evidence, not the gate.
+      // Post (or update) the per-skill artifact summary comment. This is now
+      // the single PR-visible audit trail for the review - inline comments
+      // were dropped in favour of one consolidated summary per skill. The
+      // status check (below) is the gate; the artifact is the evidence.
+      // Failure here is warn-only - the artifact is evidence, not the gate.
       const artifactResult = postOrUpdateArtifactComment(
         remote,
         prNumber,
@@ -101,7 +99,7 @@ export async function attest(args: string[]) {
             ? "artifact updated"
             : "artifact post failed";
       console.log(
-        `Skilled PR: posted ${result.new} new, skipped ${result.skipped} existing finding(s) on PR #${prNumber} (${artifactNote}).`,
+        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote}).`,
       );
     }
   }
@@ -164,85 +162,6 @@ function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null 
   } catch {
     return null;
   }
-}
-
-function fetchExistingFingerprints(remote: GitHubRemote, prNumber: number): Set<string> {
-  // `gh api --paginate` emits multiple concatenated JSON arrays for PRs with
-  // >100 comments (one array per page). `JSON.parse` chokes on that. `--slurp`
-  // wraps the pages into a single Array<Array<...>> which we flatten. Without
-  // slurp, the parse silently fails → empty Set → every finding posts again as
-  // a duplicate on every re-run. Found by adversarial review.
-  const proc = run([
-    "gh", "api",
-    `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
-    "--paginate",
-    "--slurp",
-  ]);
-  const seen = new Set<string>();
-  if (proc.exitCode !== 0) return seen;
-  try {
-    const pages = JSON.parse(proc.stdout) as Array<Array<{ body: string }>>;
-    for (const page of pages) {
-      for (const c of page) {
-        const fp = extractFingerprint(c.body);
-        if (fp) seen.add(fp);
-      }
-    }
-  } catch {
-    // malformed JSON from gh — treat as no existing fingerprints
-  }
-  return seen;
-}
-
-function postFindingsAsComments(
-  remote: GitHubRemote,
-  prNumber: number,
-  sha: string,
-  findings: Finding[],
-  skillName: string,
-): { new: number; skipped: number } {
-  const existing = fetchExistingFingerprints(remote, prNumber);
-  let newCount = 0;
-  let skipped = 0;
-
-  for (const finding of findings) {
-    if (existing.has(finding.fingerprint)) {
-      skipped++;
-      continue;
-    }
-
-    // Use --input to pipe a full JSON payload via stdin. Avoids `gh api -f`'s
-    // `@`-prefix file-reference behavior, which would silently break any
-    // finding whose body starts with `@` (e.g. documenting a Python decorator).
-    const payload = JSON.stringify({
-      body: formatCommentBody(finding, skillName),
-      commit_id: sha,
-      path: finding.path,
-      line: finding.line,
-      side: finding.side ?? "RIGHT",
-    });
-
-    const proc = run(
-      [
-        "gh", "api",
-        `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
-        "-X", "POST",
-        "--input", "-",
-      ],
-      payload,
-    );
-
-    if (proc.exitCode !== 0) {
-      const classified = classifyGhError(proc.stderr, { operation: "post-comment", remote });
-      console.error(
-        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}.\n\n${classified.message}`,
-      );
-      process.exit(1);
-    }
-    newCount++;
-  }
-
-  return { new: newCount, skipped };
 }
 
 /**

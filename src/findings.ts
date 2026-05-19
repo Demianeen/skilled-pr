@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -31,30 +30,16 @@ export const FindingInputSchema = z.object({
 
 export const FindingsInputSchema = z.array(FindingInputSchema);
 
-/** What a review skill produces. Inferred from the zod schema. */
+/**
+ * What a review skill produces. Inferred from the zod schema.
+ *
+ * `Finding` is now an alias for `FindingInput`. Earlier versions extended
+ * the input shape with a `fingerprint` field used to dedupe inline PR
+ * comments across attest re-runs. Inline comments were removed in favour
+ * of a single artifact summary, so fingerprints have no consumer left.
+ */
 export type FindingInput = z.infer<typeof FindingInputSchema>;
-
-/** A finding after the tool has enriched it with a fingerprint. */
-export interface Finding extends FindingInput {
-  fingerprint: string;
-}
-
-// ---------------------------------------------------------------------------
-// Fingerprinting
-//   SHA256(path + ":" + title + ":" + first_20_chars_of_body)
-// ---------------------------------------------------------------------------
-
-export function computeFingerprint(input: {
-  path: string;
-  title: string;
-  body: string;
-}): string {
-  const material = `${input.path}:${input.title}:${input.body.slice(0, 20)}`;
-  // Truncate to 16 hex chars (64 bits): short enough to keep embedded
-  // comment markers readable, long enough that collisions within a single
-  // repo are effectively impossible. Bump if we ever see one.
-  return createHash("sha256").update(material).digest("hex").slice(0, 16);
-}
+export type Finding = FindingInput;
 
 // ---------------------------------------------------------------------------
 // Parsing + validation (zod-backed)
@@ -80,10 +65,7 @@ export function parseFindings(raw: string): Finding[] {
     throw new Error(`${formatIssuePath(issue.path)}: ${issue.message}`);
   }
 
-  return result.data.map((f) => ({
-    ...f,
-    fingerprint: computeFingerprint({ path: f.path, title: f.title, body: f.body }),
-  }));
+  return result.data;
 }
 
 /**
@@ -109,55 +91,17 @@ function formatIssuePath(path: ReadonlyArray<string | number | symbol>): string 
 export { findingsSchemaForPrompt } from "./findings-prompt";
 
 // ---------------------------------------------------------------------------
-// Comment body formatting
-// ---------------------------------------------------------------------------
-
-const SEVERITY_BADGE: Record<Severity, string> = {
-  error: "🔴 **error**",
-  warning: "🟡 **warning**",
-  info: "🔵 **info**",
-};
-
-/** Render a finding as a GitHub PR review comment body with a fingerprint marker. */
-export function formatCommentBody(finding: Finding, skillName: string): string {
-  const parts: string[] = [];
-  parts.push(`${SEVERITY_BADGE[finding.severity]} · ${finding.title}`);
-  parts.push("");
-  parts.push(finding.body);
-
-  if (finding.suggestion) {
-    parts.push("");
-    parts.push("**Suggestion:**");
-    parts.push(finding.suggestion);
-  }
-
-  parts.push("");
-  parts.push(`<sub>via \`skilled-pr\` · skill: \`${skillName}\`</sub>`);
-  parts.push(`<!-- skilled-pr:fp:${finding.fingerprint} -->`);
-
-  return parts.join("\n");
-}
-
-/** Extract the fingerprint from a comment body, or null if not present. */
-export function extractFingerprint(commentBody: string): string | null {
-  const match = commentBody.match(/<!-- skilled-pr:fp:([a-f0-9]+) -->/);
-  return match ? match[1] : null;
-}
-
-// ---------------------------------------------------------------------------
 // Artifact summary comment (per-skill, top-level on the PR)
 //
-// While inline fingerprint-marked comments cover individual findings, the
-// artifact comment is the single per-skill summary that posts even when
-// there are zero findings. Without it, the only PR-visible evidence of a
-// review is a green status check — easy to fabricate or miss. The artifact
-// is the audit trail: it tells reviewers "this skill ran on this commit
-// and produced N findings of severity X/Y/Z."
+// The artifact comment is the single per-skill summary that posts on every
+// attest run, even when there are zero findings. It's the only PR-visible
+// evidence of a review beyond the status check: a green check is easy to
+// fabricate or miss; the artifact is the audit trail that says "this skill
+// ran on this commit and produced N findings of severity X/Y/Z."
 //
 // Posted as a top-level PR comment (issues endpoint), edited (PATCHed) on
 // each re-attestation so there's only ever ONE artifact per skill. Marker
 // `<!-- skilled-pr:artifact:<skill-name> -->` lets us find and update it.
-// Distinct from the inline `:fp:<hash>` marker — no collision risk.
 // ---------------------------------------------------------------------------
 
 /**

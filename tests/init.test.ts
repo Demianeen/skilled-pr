@@ -2,7 +2,12 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mergeSkilledPRHooks, writeFileWithMkdir, type ClaudeSettings } from "../src/init";
+import {
+  mergeSkilledPRHooks,
+  writeFileWithMkdir,
+  ensureGitignoreEntry,
+  type ClaudeSettings,
+} from "../src/init";
 
 const SKILLED_PR_CMD = "skilled-pr hook";
 
@@ -219,5 +224,78 @@ describe("writeFileWithMkdir", () => {
     writeFileWithMkdir(target, "fresh content");
     expect(readFileSync(target, "utf8")).toBe("fresh content");
     expect(existsSync(target + ".tmp")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureGitignoreEntry
+//
+// init calls this with `.review/` so per-review artifacts never end up in
+// commits. The function operates on `.gitignore` in the current working
+// directory; tests chdir into a tmpdir to isolate.
+// ---------------------------------------------------------------------------
+
+describe("ensureGitignoreEntry", () => {
+  let tmp: string;
+  let prevCwd: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-gitignore-test-"));
+    prevCwd = process.cwd();
+    process.chdir(tmp);
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("creates .gitignore when it does not exist", () => {
+    expect(existsSync(".gitignore")).toBe(false);
+    ensureGitignoreEntry(".review/");
+    expect(existsSync(".gitignore")).toBe(true);
+    expect(readFileSync(".gitignore", "utf8")).toBe(".review/\n");
+  });
+
+  test("appends to an existing .gitignore (preserves prior content)", () => {
+    writeFileSync(".gitignore", "node_modules/\ndist/\n");
+    ensureGitignoreEntry(".review/");
+    expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\ndist/\n.review/\n");
+  });
+
+  test("is idempotent: re-running does not append a duplicate line", () => {
+    writeFileSync(".gitignore", "node_modules/\n.review/\n");
+    ensureGitignoreEntry(".review/");
+    expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\n.review/\n");
+  });
+
+  test("does NOT false-match when the entry is a substring of another line", () => {
+    // Catches a naive `current.includes(entry)` implementation. The
+    // existing `vendored/.review/` line should NOT prevent the helper
+    // from adding the bare `.review/` ignore for the repo root.
+    writeFileSync(".gitignore", "vendored/.review/\n");
+    ensureGitignoreEntry(".review/");
+    expect(readFileSync(".gitignore", "utf8")).toBe("vendored/.review/\n.review/\n");
+  });
+
+  test("handles a file that does not end with a newline", () => {
+    // No trailing newline -> appending should insert one before the
+    // new entry so it lands on its own line.
+    writeFileSync(".gitignore", "node_modules/");
+    ensureGitignoreEntry(".review/");
+    expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\n.review/\n");
+  });
+
+  test("matches across CRLF line endings (Windows-friendly)", () => {
+    // The file might be CRLF-line-ended (Windows). Idempotency must
+    // not double-add the entry just because the line endings differ.
+    writeFileSync(".gitignore", "node_modules/\r\n.review/\r\n");
+    ensureGitignoreEntry(".review/");
+    // Unchanged.
+    expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\r\n.review/\r\n");
+  });
+
+  test("works with arbitrary entries (not just .review/)", () => {
+    // Defensive: the helper is named generically and may be reused.
+    ensureGitignoreEntry(".env.local");
+    expect(readFileSync(".gitignore", "utf8")).toBe(".env.local\n");
   });
 });

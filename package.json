@@ -1,6 +1,6 @@
 {
   "name": "skilled-pr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open review transport for AI-native development. Attestation that your code was reviewed by AI skills.",
   "type": "module",
   "bin": {

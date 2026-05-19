@@ -313,6 +313,19 @@ describe("buildHookOutput", () => {
     };
     expect(buildHookOutput(event, ["review"])).toBeNull();
   });
+
+  test("Codex /help is filtered even if 'help' is in requiredSkills (layered defense)", () => {
+    // Defense in depth: the builtin filter in extractLeadingSlashCommand
+    // runs BEFORE the requiredSkills membership check, so a misconfigured
+    // config that lists "help" can't make `/help` trigger the gate.
+    // Without this guarantee, asking Codex for help inside a repo gated by
+    // skilled-pr would loop the attestation reminder forever.
+    const event = {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "/help",
+    };
+    expect(buildHookOutput(event, ["help"])).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

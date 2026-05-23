@@ -5,6 +5,13 @@ All notable changes to `skilled-pr` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/Demianeen/skilled-pr/compare/v0.3.0...v0.4.0) (2026-05-23)
+
+
+### Features
+
+* strict CLI arg parsing (reject unknown flags, support --flag=value) ([#12](https://github.com/Demianeen/skilled-pr/issues/12)) ([d47df0e](https://github.com/Demianeen/skilled-pr/commit/d47df0e4019438208f6fc0deb0fb8bcbda968f53))
+
 ## [0.3.0](https://github.com/Demianeen/skilled-pr/compare/v0.2.0...v0.3.0) (2026-05-19)
 
 

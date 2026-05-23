@@ -104,24 +104,30 @@ describe("slugifySkill", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildReminder", () => {
+  // buildReminder now requires a prompt - the config parser refuses to load
+  // a config without one, so this function can rely on it being present.
+  // Helper to avoid repeating a placeholder prompt in every test.
+  const PROMPT = "Render markdown with a header and a list of findings.";
+
   test("includes the skill name verbatim", () => {
-    expect(buildReminder("coderabbit:review")).toContain("`coderabbit:review`");
+    expect(buildReminder("coderabbit:review", PROMPT)).toContain("`coderabbit:review`");
   });
 
-  test("includes the derived findings path", () => {
-    expect(buildReminder("coderabbit:review")).toContain(
-      ".review/findings-coderabbit-review.json",
-    );
+  test("includes the derived findings + summary paths", () => {
+    const r = buildReminder("coderabbit:review", PROMPT);
+    expect(r).toContain(".review/findings-coderabbit-review.json");
+    expect(r).toContain(".review/summary-coderabbit-review.md");
   });
 
-  test("includes the attest command with both flags", () => {
-    const r = buildReminder("review");
+  test("includes the attest command with all three flags", () => {
+    const r = buildReminder("review", PROMPT);
     expect(r).toContain("skilled-pr attest --skill review");
     expect(r).toContain("--findings .review/findings-review.json");
+    expect(r).toContain("--summary .review/summary-review.md");
   });
 
   test("includes the schema description (so the model knows the shape)", () => {
-    const r = buildReminder("review");
+    const r = buildReminder("review", PROMPT);
     expect(r).toContain("severity");
     expect(r).toContain("error");
     expect(r).toContain("warning");
@@ -131,16 +137,52 @@ describe("buildReminder", () => {
   });
 
   test("tells the model what to do when there are no findings", () => {
-    expect(buildReminder("review")).toContain("[]");
+    expect(buildReminder("review", PROMPT)).toContain("[]");
   });
 
   test("includes the exit-code-2 push-recovery instruction", () => {
     // The model needs to know how to recover when attest fails because
-    // HEAD isn't on remote yet — see attest.ts pre-flight check.
-    const r = buildReminder("review");
+    // HEAD isn't on remote yet - see attest.ts pre-flight check.
+    const r = buildReminder("review", PROMPT);
     expect(r).toContain("exits with code 2");
     expect(r).toContain("git push");
     expect(r).toMatch(/ask the user/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // summaryPrompt embedding
+  // -------------------------------------------------------------------------
+
+  test("renders a 4-step reminder (findings + summary + attest + recovery)", () => {
+    const r = buildReminder("review", PROMPT);
+    expect(r).toMatch(/four things in order/i);
+    expect(r).toContain(".review/summary-review.md");
+    expect(r).toContain("--summary .review/summary-review.md");
+  });
+
+  test("embeds the prompt verbatim in the reminder body", () => {
+    const distinct = "FIND_THIS_EXACT_PHRASE_2718281828";
+    const r = buildReminder("review", `Some preface. ${distinct} Some suffix.`);
+    expect(r).toContain(distinct);
+  });
+
+  test("namespaced skill names get the correct slug for paths", () => {
+    const r = buildReminder("coderabbit:review", PROMPT);
+    expect(r).toContain(".review/findings-coderabbit-review.json");
+    expect(r).toContain(".review/summary-coderabbit-review.md");
+    // attest --skill keeps the original (un-slugified) skill name.
+    expect(r).toContain("--skill coderabbit:review");
+  });
+
+  test("multi-line summaryPrompt is embedded with each line indented", () => {
+    // Indentation matters because the prompt is nested under a numbered
+    // step; without indenting, the second line would visually break out
+    // of the list structure in the rendered reminder.
+    const prompt = "line 1\nline 2\nline 3";
+    const r = buildReminder("review", prompt);
+    expect(r).toContain("   line 1");
+    expect(r).toContain("   line 2");
+    expect(r).toContain("   line 3");
   });
 });
 
@@ -149,8 +191,12 @@ describe("buildReminder", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildHookOutput", () => {
+  // buildHookOutput now takes a required summaryPrompt (forwarded into
+  // the reminder). Helper to avoid repeating it in every test.
+  const PROMPT = "Render markdown with a header and a list of findings.";
+
   test("returns null when the event resolves to no skill", () => {
-    expect(buildHookOutput({ hook_event_name: "Stop" }, ["review"])).toBeNull();
+    expect(buildHookOutput({ hook_event_name: "Stop" }, ["review"], PROMPT)).toBeNull();
   });
 
   test("returns null when the skill isn't required", () => {
@@ -159,7 +205,7 @@ describe("buildHookOutput", () => {
       tool_name: "Skill",
       tool_input: { skill: "unrelated-skill" },
     };
-    expect(buildHookOutput(event, ["review"])).toBeNull();
+    expect(buildHookOutput(event, ["review"], PROMPT)).toBeNull();
   });
 
   test("emits a JSON payload with hookSpecificOutput when the skill is required", () => {
@@ -168,7 +214,7 @@ describe("buildHookOutput", () => {
       tool_name: "Skill",
       tool_input: { skill: "review" },
     };
-    const out = buildHookOutput(event, ["review"]);
+    const out = buildHookOutput(event, ["review"], PROMPT);
     expect(out).not.toBeNull();
     const parsed = JSON.parse(out!);
     expect(parsed.hookSpecificOutput.hookEventName).toBe("PostToolUse");
@@ -181,7 +227,7 @@ describe("buildHookOutput", () => {
       hook_event_name: "UserPromptExpansion",
       command_name: "review",
     };
-    const out = buildHookOutput(event, ["review"]);
+    const out = buildHookOutput(event, ["review"], PROMPT);
     expect(out).not.toBeNull();
     const parsed = JSON.parse(out!);
     expect(parsed.hookSpecificOutput.hookEventName).toBe("UserPromptExpansion");
@@ -195,7 +241,7 @@ describe("buildHookOutput", () => {
       tool_name: "Skill",
       tool_input: { skill: "coderabbit:review" },
     };
-    const out = buildHookOutput(event, ["coderabbit:review"]);
+    const out = buildHookOutput(event, ["coderabbit:review"], PROMPT);
     const parsed = JSON.parse(out!);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("--skill coderabbit:review");
     expect(parsed.hookSpecificOutput.additionalContext).toContain(
@@ -209,7 +255,20 @@ describe("buildHookOutput", () => {
       tool_name: "Skill",
       tool_input: { skill: "review" },
     };
-    expect(buildHookOutput(event, [])).toBeNull();
+    expect(buildHookOutput(event, [], PROMPT)).toBeNull();
+  });
+
+  test("propagates summaryPrompt into the embedded reminder", () => {
+    const event = {
+      hook_event_name: "PostToolUse",
+      tool_name: "Skill",
+      tool_input: { skill: "review" },
+    };
+    const distinct = "DISTINCT_PROMPT_PHRASE_3141592653";
+    const out = buildHookOutput(event, ["review"], distinct);
+    const parsed = JSON.parse(out!);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(distinct);
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("--summary");
   });
 });
 

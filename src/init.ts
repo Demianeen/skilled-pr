@@ -96,6 +96,41 @@ export function writeFileWithMkdir(path: string, contents: string) {
   }
 }
 
+/**
+ * Idempotently ensure `entry` appears on its own line in the repo's
+ * `.gitignore`. Creates `.gitignore` at the repo root if it doesn't
+ * exist. Matches with newline-bounded equality so `entry: ".review/"`
+ * does NOT consider an existing `node_modules/.review/` line a match.
+ *
+ * Used by init to add `.review/` so per-review artifacts (findings.json,
+ * summary-<slug>.md) don't get committed.
+ */
+export function ensureGitignoreEntry(entry: string) {
+  const path = ".gitignore";
+  if (!existsSync(path)) {
+    // Fresh repo with no .gitignore: create it. Skills' artifacts going
+    // straight into git on day-one would be the worst onboarding.
+    writeFileWithMkdir(path, `${entry}\n`);
+    console.log(`✓ Created ${path} with \`${entry}\``);
+    return;
+  }
+  const current = readFileSync(path, "utf8");
+  // Newline-bounded match so `.review/` doesn't false-positive on
+  // `node_modules/something/.review/`. Also matches both `entry` and
+  // `entry\r\n` (Windows line endings) and the trailing-newline-omitted
+  // case at EOF.
+  const lines = current.split(/\r?\n/);
+  if (lines.includes(entry)) {
+    console.log(`✓ ${path} already ignores \`${entry}\``);
+    return;
+  }
+  // Append the entry. Ensure the existing file ends with a newline first
+  // so the new entry lands on its own line instead of mid-line-joined.
+  const sep = current.endsWith("\n") ? "" : "\n";
+  writeFileSync(path, `${current}${sep}${entry}\n`);
+  console.log(`✓ Added \`${entry}\` to ${path}`);
+}
+
 export async function init() {
   console.log("Skilled PR — setting up...\n");
 
@@ -144,7 +179,15 @@ export async function init() {
     console.log(`✓ Updated ${CLAUDE_SETTINGS_PATH} with skilled-pr hooks`);
   }
 
-  // 3. Guide branch protection
+  // 3. Ensure `.review/` is gitignored. Skills write findings.json and
+  //    summary-<slug>.md into .review/ on every review; committing those
+  //    files would clutter every PR's diff and produce merge conflicts on
+  //    parallel reviews. The GitHub PR's artifact comment is the durable
+  //    record; the local .review/ files are just plumbing between the
+  //    skill and attest.
+  ensureGitignoreEntry(".review/");
+
+  // 4. Guide branch protection
   console.log(`
 Next steps:
 
@@ -153,8 +196,9 @@ Next steps:
      (or \`pnpm add -g skilled-pr\`) or pin a per-project install and
      adjust .claude/settings.json.
 
-  2. Review \`.skilledpr.jsonc\` and list which review skills must run
-     before merge under \`requiredSkills\`.
+  2. Review \`.skilledpr.jsonc\`. List which review skills must run
+     before merge under \`requiredSkills\`, and tune the \`summaryPrompt\`
+     to whatever shape you want each skill's PR comment to take.
 
   3. Enable branch protection on GitHub:
      → Repo Settings → Branches → Branch protection rules

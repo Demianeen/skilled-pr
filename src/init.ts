@@ -6,7 +6,8 @@
 //   2. Installs hooks into every detected harness (Claude Code, Codex,
 //      both). Detection scans for `.claude/` and `.codex/` directories.
 //      Override with `--for claude|codex|both` for explicit control.
-//   3. Prints next-step guidance.
+//   3. Ensures `.review/` is gitignored.
+//   4. Prints next-step guidance.
 //
 // All the per-harness specifics (where the config file lives, what schema it
 // uses, how to merge without clobbering) live in `src/harness/*`. This file
@@ -61,12 +62,47 @@ export function writeFileWithMkdir(path: string, contents: string) {
 }
 
 /**
+ * Idempotently ensure `entry` appears on its own line in the repo's
+ * `.gitignore`. Creates `.gitignore` at the repo root if it doesn't
+ * exist. Matches with newline-bounded equality so `entry: ".review/"`
+ * does NOT consider an existing `node_modules/.review/` line a match.
+ *
+ * Used by init to add `.review/` so per-review artifacts (findings.json,
+ * summary-<slug>.md) don't get committed.
+ */
+export function ensureGitignoreEntry(entry: string) {
+  const path = ".gitignore";
+  if (!existsSync(path)) {
+    // Fresh repo with no .gitignore: create it. Skills' artifacts going
+    // straight into git on day one would make noisy PRs.
+    writeFileWithMkdir(path, `${entry}\n`);
+    console.log(`✓ Created ${path} with \`${entry}\``);
+    return;
+  }
+  const current = readFileSync(path, "utf8");
+  // Newline-bounded match so `.review/` doesn't false-positive on
+  // `node_modules/something/.review/`. Also matches both `entry` and
+  // `entry\r\n` (Windows line endings) and the trailing-newline-omitted
+  // case at EOF.
+  const lines = current.split(/\r?\n/);
+  if (lines.includes(entry)) {
+    console.log(`✓ ${path} already ignores \`${entry}\``);
+    return;
+  }
+  // Append the entry. Ensure the existing file ends with a newline first
+  // so the new entry lands on its own line instead of mid-line-joined.
+  const sep = current.endsWith("\n") ? "" : "\n";
+  writeFileSync(path, `${current}${sep}${entry}\n`);
+  console.log(`✓ Added \`${entry}\` to ${path}`);
+}
+
+/**
  * For a single harness: read its existing config (if any), merge skilled-pr's
  * hook entry, write back. Prints a one-line status to stdout. Returns true if
  * the file was modified, false if nothing changed (already wired up).
  *
- * Refuses (exits 1) when the existing file has JSON syntax errors. See the
- * inline note below: silent partial-parse merging would destroy user data.
+ * Throws when the existing file has JSON syntax errors. The caller decides
+ * whether to continue with other harnesses before exiting non-zero.
  */
 function installForHarness(harness: Harness): boolean {
   let existing: unknown = null;
@@ -85,12 +121,11 @@ function installForHarness(harness: Harness): boolean {
     existing = parseJsonc(raw, errors, { allowTrailingComma: true });
     if (errors.length > 0) {
       const { error, offset, length } = errors[0];
-      console.error(
-        `Skilled PR: ${harness.settingsPath} has invalid JSON (${printParseErrorCode(error)} at offset ${offset}, length ${length}).\n` +
+      throw new Error(
+        `${harness.settingsPath} has invalid JSON (${printParseErrorCode(error)} at offset ${offset}, length ${length}).\n` +
           `Refusing to merge; the merge would overwrite your file with a best-effort parse and silently lose data.\n` +
           `Fix the syntax error in ${harness.settingsPath}, then re-run \`skilled-pr init\`.`,
       );
-      process.exit(1);
     }
   }
 
@@ -140,14 +175,31 @@ export async function init(argv: string[] = []) {
     console.log("✓ Created .skilledpr.jsonc");
   }
 
-  // 4. Install hooks for each selected harness. Each call refuses (exit 1)
-  //    if the target settings file has JSON syntax errors; that's by design,
-  //    silently merging into a partial parse would destroy user data.
+  // 4. Keep local review artifacts out of PR diffs.
+  ensureGitignoreEntry(".review/");
+
+  // 5. Install hooks for each selected harness. A corrupt settings file is
+  //    skipped, not merged into, but healthy harnesses still get wired up.
+  const installErrors: Array<{ harness: Harness; error: Error }> = [];
   for (const harness of harnesses) {
-    installForHarness(harness);
+    try {
+      installForHarness(harness);
+    } catch (error) {
+      installErrors.push({
+        harness,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+  }
+  if (installErrors.length > 0) {
+    console.error("skilled-pr init: could not update one or more harness hook files:");
+    for (const { harness, error } of installErrors) {
+      console.error(`\n${harness.label} (${harness.settingsPath}):\n${error.message}`);
+    }
+    process.exit(1);
   }
 
-  // 5. Next steps. The "your harness here" wording adapts to what we wired up.
+  // 6. Next steps. The "your harness here" wording adapts to what we wired up.
   const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:
@@ -157,8 +209,9 @@ Next steps:
      (or \`pnpm add -g skilled-pr\`) or pin a per-project install and
      adjust the hook command.
 
-  2. Review \`.skilledpr.jsonc\` and list which review skills must run
-     before merge under \`requiredSkills\`.
+  2. Review \`.skilledpr.jsonc\`. List which review skills must run
+     before merge under \`requiredSkills\`, and tune the \`summaryPrompt\`
+     to whatever shape you want each skill's PR comment to take.
 
   3. Enable branch protection on GitHub:
      -> Repo Settings -> Branches -> Branch protection rules

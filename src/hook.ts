@@ -185,24 +185,53 @@ export function slugifySkill(name: string): string {
     .toLowerCase();
 }
 
-/** Build the attestation-instruction system reminder for a given skill. */
-export function buildReminder(skillName: string): string {
+/**
+ * Build the attestation-instruction system reminder for a given skill.
+ *
+ * `summaryPrompt` is required - it's the only description of what the PR
+ * artifact comment should look like. skilled-pr no longer renders a
+ * fallback, so a missing prompt means the system can't produce a
+ * meaningful summary. The config parser refuses to load a config without
+ * one, so this function can rely on it being present.
+ */
+export function buildReminder(skillName: string, summaryPrompt: string): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
-  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`;
-  return [
+  const summaryPath = `.review/summary-${slug}.md`;
+  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath} --summary ${summaryPath}`;
+
+  const lines: string[] = [];
+  lines.push(
     `This repo gates merges via skilled-pr. The \`${skillName}\` skill you just loaded is listed in \`.skilledpr.jsonc\` as a required review.`,
-    "",
-    "After completing your review, do these three things in order:",
-    "",
+  );
+  lines.push("");
+  lines.push("After completing your review, do these four things in order:");
+  lines.push("");
+  lines.push(
     `1. Write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
-    "",
-    `2. Run: \`${attestCommand}\``,
-    "",
-    "3. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run `git push` and then re-run the attest command from step 2. Do NOT push without asking — pushing modifies the remote.",
-    "",
+  );
+  lines.push("");
+  lines.push(
+    `2. Write a markdown summary to \`${summaryPath}\` following this project's summary style. The summary becomes the PR's artifact comment verbatim.`,
+  );
+  lines.push("");
+  lines.push("   Per-project summary instructions:");
+  lines.push("");
+  // Indent the user's prompt so it visually nests inside the step.
+  for (const line of summaryPrompt.split("\n")) {
+    lines.push(`   ${line}`);
+  }
+  lines.push("");
+  lines.push(`3. Run: \`${attestCommand}\``);
+  lines.push("");
+  lines.push(
+    "4. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run `git push` and then re-run the attest command. Do NOT push without asking - pushing modifies the remote.",
+  );
+  lines.push("");
+  lines.push(
     "This posts the GitHub status check that gates the PR. Without it, the PR cannot merge.",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 /**
@@ -218,6 +247,7 @@ export function buildReminder(skillName: string): string {
 export function buildHookOutput(
   event: HookEvent,
   requiredSkills: ReadonlyArray<string>,
+  summaryPrompt: string,
 ): string | null {
   const skillName = extractSkillName(event);
   if (skillName === null) return null;
@@ -234,7 +264,7 @@ export function buildHookOutput(
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: eventName,
-      additionalContext: buildReminder(skillName),
+      additionalContext: buildReminder(skillName, summaryPrompt),
     },
   });
 }
@@ -274,6 +304,6 @@ export async function hook() {
   }
   if (!config) return;
 
-  const output = buildHookOutput(event, config.requiredSkills);
+  const output = buildHookOutput(event, config.requiredSkills, config.summaryPrompt);
   if (output) console.log(output);
 }

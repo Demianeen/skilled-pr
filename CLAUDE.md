@@ -1,6 +1,6 @@
 # CLAUDE.md — skilled-pr
 
-Project-level instructions for Claude Code and agents working on this repo.
+Project-level instructions for Claude Code, Codex, and agents working on this repo.
 
 ## Commit convention
 
@@ -30,7 +30,7 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 | `refactor` | Code change that neither adds a feature nor fixes a bug |
 | `perf` | A change that improves performance |
 | `test` | Adding or updating tests only |
-| `docs` | Documentation-only changes (README, CLAUDE.md, code comments) |
+| `docs` | Documentation-only changes (README, CLAUDE.md/AGENTS.md, code comments) |
 | `build` | Changes to the build system or dependencies (`pnpm-lock.yaml`, `package.json`, `tsup.config.ts`) |
 | `ci` | Changes to CI configuration (`.github/workflows/*`) |
 | `chore` | Everything else that doesn't modify src/ or tests/ |
@@ -44,7 +44,7 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 - `fix: dedupe silently broken — gh api --jq does not accept --arg`
 - `refactor: switch JSONC parser from regex to microsoft/jsonc-parser`
 - `test: cover strings containing comment syntax in parseConfig`
-- `docs: add CLAUDE.md with angular commit convention`
+- `docs: add agent instructions with angular commit convention`
 
 ❌ Avoid:
 - `update config parser` — missing `<type>:` prefix
@@ -57,17 +57,26 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 Every PR to `main` must pass the `Skilled PR / review` commit status. The flow
 is plug-and-play — you don't run `attest` by hand:
 
-1. In Claude Code, invoke a required review skill (e.g. `/review`). The
+1. In Claude Code or Codex, invoke a required review skill (e.g. `/review`). The
    skills listed under `requiredSkills` in `.skilledpr.jsonc` are the gate.
-2. The `skilled-pr hook` (installed into `.claude/settings.json` by
-   `skilled-pr init`) fires on `PostToolUse:Skill` / `UserPromptExpansion`
+2. The `skilled-pr hook` (installed into `.claude/settings.json` and/or
+   `.codex/hooks.json` by `skilled-pr init`) fires on harness-specific events
+   (`PostToolUse:Skill` / `UserPromptExpansion` for Claude Code,
+   `UserPromptSubmit` for Codex)
    and injects a system reminder telling the model to:
      - write findings to `.review/findings-<skill-slug>.json` as a JSON array
-       (schema in `src/findings.ts`), and
-     - run `skilled-pr attest --skill <name> --findings <path>`.
-3. `attest` posts each new finding as an inline PR comment (deduped by
-   fingerprint across re-runs) and posts the commit-status check against
-   `HEAD`. Severity gates the status state via `failOn` in the config.
+       (schema in `src/findings.ts`),
+     - write a markdown summary to `.review/summary-<skill-slug>.md`
+       following the project's `summaryPrompt` (embedded verbatim in the
+       reminder), and
+     - run `skilled-pr attest --skill <name> --findings <path> --summary <path>`.
+3. `attest` posts the rendered summary as the per-skill artifact comment
+   (PATCH-updated in place on re-runs via an HTML marker) and posts the
+   commit-status check against `HEAD`. Severity gates the status state via
+   `failOn`. Inline PR comments were removed; the artifact comment is the
+   sole PR-visible review surface, and the skill renders its body itself.
+   skilled-pr has no built-in template - the `summaryPrompt` is the only
+   description of what a PR comment should look like, and it's required.
 
 The status is posted per-SHA. If you push a new commit, the previous
 attestation does **not** carry over — re-invoke the skill (or run `attest`
@@ -79,7 +88,7 @@ If you need to bypass the hook (debugging, scripted CI, dogfooding this
 repo's own CLI without `npm link`-ing it globally):
 
 ```
-pnpm dev attest --skill review [--findings <path>]
+pnpm dev attest --skill review [--findings <path>] [--summary <path>]
 ```
 
 (`pnpm dev` is `tsx src/cli.ts` per `package.json` — runs TypeScript
@@ -91,6 +100,27 @@ directly without a build.)
 with code **2** and prints push instructions. The system reminder tells the
 model to ask the user before running `git push` — pushing modifies the
 remote, so don't bypass the confirmation step.
+
+## Worktree convention
+
+When creating a `git worktree` for parallel branches, put it under
+`.claude/worktrees/<branch-or-purpose>` in the repo root. `.claude/` is
+gitignored, so worktree contents stay local and don't clutter the parent
+directory or pollute IDE/Spotlight project lists.
+
+Examples:
+- `.claude/worktrees/codex` for the `feat/codex-hook-support` branch
+- `.claude/worktrees/pnpm-10` for a `build/bump-pnpm-10` branch
+
+To move an existing sibling worktree to this layout:
+
+```
+mkdir -p .claude/worktrees
+git worktree move ../skilled-pr-codex .claude/worktrees/codex
+```
+
+`git worktree move` is non-destructive; uncommitted changes and the branch
+checkout are preserved.
 
 ## Pre-commit self-review
 

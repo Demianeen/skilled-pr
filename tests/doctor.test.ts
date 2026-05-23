@@ -166,17 +166,28 @@ describe("classifySkilledPRConfig", () => {
   });
 
   test("valid config → pass with requiredSkills summary", () => {
-    const r = classifySkilledPRConfig('{ "requiredSkills": ["review", "coderabbit:review"] }');
+    const r = classifySkilledPRConfig(
+      '{ "requiredSkills": ["review", "coderabbit:review"], "summaryPrompt": "x" }',
+    );
     expect(r.status).toBe("pass");
     expect(r.detail).toContain("review");
     expect(r.detail).toContain("coderabbit:review");
   });
 
   test("empty requiredSkills → warn (hook never fires)", () => {
-    const r = classifySkilledPRConfig('{ "requiredSkills": [] }');
+    const r = classifySkilledPRConfig('{ "requiredSkills": [], "summaryPrompt": "x" }');
     expect(r.status).toBe("warn");
     expect(r.detail).toContain("empty");
     expect(r.fix).toContain("at least one skill");
+  });
+
+  test("missing summaryPrompt → fail with regenerate hint", () => {
+    // summaryPrompt is required since the artifact comment is rendered by
+    // the skill (no built-in fallback). Doctor should call this out
+    // explicitly so the user knows to re-run `init`.
+    const r = classifySkilledPRConfig('{ "requiredSkills": ["review"] }');
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("summaryPrompt");
   });
 
   test("invalid JSON → fail with parse error", () => {
@@ -554,8 +565,12 @@ describe("classifiers populate `why` for every status branch", () => {
   });
 
   test("classifySkilledPRConfig has why on pass + warn + fail", () => {
-    expect(classifySkilledPRConfig('{ "requiredSkills": ["a"] }').why).toBeDefined();
-    expect(classifySkilledPRConfig('{ "requiredSkills": [] }').why).toBeDefined();
+    expect(
+      classifySkilledPRConfig('{ "requiredSkills": ["a"], "summaryPrompt": "x" }').why,
+    ).toBeDefined();
+    expect(
+      classifySkilledPRConfig('{ "requiredSkills": [], "summaryPrompt": "x" }').why,
+    ).toBeDefined();
     expect(classifySkilledPRConfig(null).why).toBeDefined();
     expect(classifySkilledPRConfig("{ broken }").why).toBeDefined();
   });

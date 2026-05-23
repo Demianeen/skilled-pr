@@ -1,8 +1,13 @@
-import { describe, expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, test } from "vitest";
 
 import {
   claudeHarness,
   codexHarness,
+  detectHarnesses,
   mergeCodexHooks,
   mergeSkilledPRHooks,
   listAllHarnesses,
@@ -116,6 +121,45 @@ describe("resolveHarnessOverride", () => {
   test("unknown values return null", () => {
     expect(resolveHarnessOverride("cursor")).toBeNull();
     expect(resolveHarnessOverride("")).toBeNull();
+  });
+});
+
+describe("detectHarnesses", () => {
+  const temps: string[] = [];
+
+  afterEach(() => {
+    for (const dir of temps.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function tempRepo() {
+    const dir = mkdtempSync(join(tmpdir(), "skilled-pr-detect-"));
+    temps.push(dir);
+    return dir;
+  }
+
+  test("returns Claude when only .claude is present", () => {
+    const dir = tempRepo();
+    mkdirSync(join(dir, ".claude"));
+    expect(detectHarnesses(dir).map((h) => h.name)).toEqual(["claude"]);
+  });
+
+  test("returns Codex when only .codex is present", () => {
+    const dir = tempRepo();
+    mkdirSync(join(dir, ".codex"));
+    expect(detectHarnesses(dir).map((h) => h.name)).toEqual(["codex"]);
+  });
+
+  test("returns both harnesses in stable order when both dirs are present", () => {
+    const dir = tempRepo();
+    mkdirSync(join(dir, ".claude"));
+    mkdirSync(join(dir, ".codex"));
+    expect(detectHarnesses(dir).map((h) => h.name)).toEqual(["claude", "codex"]);
+  });
+
+  test("falls back to Claude when neither harness dir is present", () => {
+    expect(detectHarnesses(tempRepo()).map((h) => h.name)).toEqual(["claude"]);
   });
 });
 

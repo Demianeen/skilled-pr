@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { run } from "./proc";
-import { loadConfig, type SkilledPRConfig } from "./config";
+import { loadConfig } from "./config";
 import {
   parseGitHubRemote,
   buildStatusContext,
@@ -10,14 +10,13 @@ import {
 import { parseAttestArgs } from "./args";
 import {
   parseFindings,
-  formatCommentBody,
-  extractFingerprint,
   findingsExceedingThreshold,
   buildStatusDescription,
-  formatArtifactComment,
   extractArtifactSkillName,
+  wrapWithArtifactMarker,
   type Finding,
 } from "./findings";
+import type { SkilledPRConfig } from "./config";
 
 type StatusState = "success" | "failure";
 
@@ -25,11 +24,11 @@ export async function attest(args: string[]) {
   const parsed = parseAttestArgs(args);
   if (!parsed.ok) {
     console.error(
-      `Usage: skilled-pr attest --skill <name> [--findings <file>]\n  (${parsed.error})`,
+      `Usage: skilled-pr attest --skill <name> [--findings <file>] [--summary <file>]\n  (${parsed.error})`,
     );
     process.exit(1);
   }
-  const { skill: skillName, findings: findingsPath } = parsed;
+  const { skill: skillName, findings: findingsPath, summary: summaryPath } = parsed;
 
   const config = await loadConfig();
   if (!config) {
@@ -58,9 +57,14 @@ export async function attest(args: string[]) {
   // and offer push recovery. Users who want silent skip in passive workflows
   // (e.g. post-commit hooks) can wrap the call: `skilled-pr attest ... || true`.
   if (!isCommitPushed(sha)) {
-    const retry = findingsPath
-      ? `skilled-pr attest --skill ${skillName} --findings ${findingsPath}`
-      : `skilled-pr attest --skill ${skillName}`;
+    const retryFlags = [
+      `--skill ${skillName}`,
+      findingsPath ? `--findings ${findingsPath}` : null,
+      summaryPath ? `--summary ${summaryPath}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const retry = `skilled-pr attest ${retryFlags}`;
     console.error(
       `Skilled PR: HEAD (${sha.slice(0, 7)}) is not pushed to ${remote.owner}/${remote.repo}. ` +
       `GitHub rejects status posts for unknown SHAs.\n\n` +
@@ -72,27 +76,38 @@ export async function attest(args: string[]) {
 
   // --- Findings ------------------------------------------------------------
 
+  // The skill writes findings.json (machine-readable; used for severity
+  // counts on the status check) AND summary-<slug>.md (the rendered
+  // artifact comment body). Both are now part of the contract; missing
+  // either is a hard error because there's no fallback rendering left.
   const findings = findingsPath ? await loadFindings(findingsPath) : null;
+  const summary = summaryPath ? loadSummary(summaryPath) : null;
 
   if (findings !== null) {
+    if (!summary) {
+      console.error(
+        `Skilled PR: attest requires --summary. The skill should render ` +
+          `.review/summary-<slug>.md and pass its path. If your invocation ` +
+          `is missing --summary, the hook reminder is stale - re-invoke the ` +
+          `skill or check .skilledpr.jsonc has summaryPrompt set.`,
+      );
+      process.exit(1);
+    }
     const prNumber = getPullRequestForSha(remote, sha);
     if (prNumber === null) {
       console.warn(
-        `Skilled PR: no open PR found for ${sha.slice(0, 7)}. ${findings.length} finding(s) not posted.`,
+        `Skilled PR: no open PR found for ${sha.slice(0, 7)}. Artifact comment not posted (status check still updates).`,
       );
     } else {
-      const result = postFindingsAsComments(remote, prNumber, sha, findings, skillName);
-      // Always post (or update) the per-skill artifact summary comment, even
-      // when there are zero findings. That's the whole point — the artifact is
-      // the audit trail that a review actually ran. Failures here warn-only —
-      // the artifact is evidence, not the gate.
+      // Post (or update) the per-skill artifact summary comment. This is
+      // the single PR-visible audit trail for the review; the status
+      // check (below) is the gate; the artifact is the evidence. Failure
+      // here is warn-only - the artifact is evidence, not the gate.
       const artifactResult = postOrUpdateArtifactComment(
         remote,
         prNumber,
-        sha,
-        findings,
+        summary,
         skillName,
-        config.failOn,
       );
       const artifactNote =
         artifactResult === "created"
@@ -101,7 +116,7 @@ export async function attest(args: string[]) {
             ? "artifact updated"
             : "artifact post failed";
       console.log(
-        `Skilled PR: posted ${result.new} new, skipped ${result.skipped} existing finding(s) on PR #${prNumber} (${artifactNote}).`,
+        `Skilled PR: ${findings.length} finding(s) on PR #${prNumber} (${artifactNote}).`,
       );
     }
   }
@@ -151,6 +166,31 @@ async function loadFindings(path: string): Promise<Finding[]> {
   }
 }
 
+/**
+ * Read the optional --summary file. Missing-file is an error (the skill
+ * was told to write it; absence means the skill broke or the path is wrong).
+ * Empty-file is also an error - an empty artifact comment is useless and
+ * almost certainly a skill bug. Bail loudly in both cases so the model
+ * notices and can recover instead of silently posting a blank comment.
+ */
+function loadSummary(path: string): string {
+  if (!existsSync(path)) {
+    console.error(
+      `Skilled PR: summary file not found: ${path}. ` +
+        `The hook reminder asked the skill to write this file; if your skill ` +
+        `doesn't produce summaries yet, remove the \`summaryPrompt\` from .skilledpr.jsonc ` +
+        `or drop the --summary flag.`,
+    );
+    process.exit(1);
+  }
+  const raw = readFileSync(path, "utf8").trim();
+  if (raw.length === 0) {
+    console.error(`Skilled PR: summary file is empty: ${path}.`);
+    process.exit(1);
+  }
+  return raw;
+}
+
 function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null {
   const proc = run([
     "gh", "api",
@@ -164,85 +204,6 @@ function getPullRequestForSha(remote: GitHubRemote, sha: string): number | null 
   } catch {
     return null;
   }
-}
-
-function fetchExistingFingerprints(remote: GitHubRemote, prNumber: number): Set<string> {
-  // `gh api --paginate` emits multiple concatenated JSON arrays for PRs with
-  // >100 comments (one array per page). `JSON.parse` chokes on that. `--slurp`
-  // wraps the pages into a single Array<Array<...>> which we flatten. Without
-  // slurp, the parse silently fails → empty Set → every finding posts again as
-  // a duplicate on every re-run. Found by adversarial review.
-  const proc = run([
-    "gh", "api",
-    `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
-    "--paginate",
-    "--slurp",
-  ]);
-  const seen = new Set<string>();
-  if (proc.exitCode !== 0) return seen;
-  try {
-    const pages = JSON.parse(proc.stdout) as Array<Array<{ body: string }>>;
-    for (const page of pages) {
-      for (const c of page) {
-        const fp = extractFingerprint(c.body);
-        if (fp) seen.add(fp);
-      }
-    }
-  } catch {
-    // malformed JSON from gh — treat as no existing fingerprints
-  }
-  return seen;
-}
-
-function postFindingsAsComments(
-  remote: GitHubRemote,
-  prNumber: number,
-  sha: string,
-  findings: Finding[],
-  skillName: string,
-): { new: number; skipped: number } {
-  const existing = fetchExistingFingerprints(remote, prNumber);
-  let newCount = 0;
-  let skipped = 0;
-
-  for (const finding of findings) {
-    if (existing.has(finding.fingerprint)) {
-      skipped++;
-      continue;
-    }
-
-    // Use --input to pipe a full JSON payload via stdin. Avoids `gh api -f`'s
-    // `@`-prefix file-reference behavior, which would silently break any
-    // finding whose body starts with `@` (e.g. documenting a Python decorator).
-    const payload = JSON.stringify({
-      body: formatCommentBody(finding, skillName),
-      commit_id: sha,
-      path: finding.path,
-      line: finding.line,
-      side: finding.side ?? "RIGHT",
-    });
-
-    const proc = run(
-      [
-        "gh", "api",
-        `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}/comments`,
-        "-X", "POST",
-        "--input", "-",
-      ],
-      payload,
-    );
-
-    if (proc.exitCode !== 0) {
-      const classified = classifyGhError(proc.stderr, { operation: "post-comment", remote });
-      console.error(
-        `Skilled PR: failed to post comment for ${finding.path}:${finding.line}.\n\n${classified.message}`,
-      );
-      process.exit(1);
-    }
-    newCount++;
-  }
-
-  return { new: newCount, skipped };
 }
 
 /**
@@ -285,12 +246,14 @@ function findExistingArtifactComment(
 function postOrUpdateArtifactComment(
   remote: GitHubRemote,
   prNumber: number,
-  sha: string,
-  findings: Finding[],
+  summary: string,
   skillName: string,
-  failOn: SkilledPRConfig["failOn"],
 ): "created" | "updated" | "failed" {
-  const body = formatArtifactComment(skillName, sha, findings, failOn);
+  // The summary is posted verbatim; the artifact marker is auto-appended
+  // so future runs find this same comment for PATCH-in-place updates.
+  // skilled-pr no longer renders its own body - the skill produced the
+  // summary following the project's `summaryPrompt`.
+  const body = wrapWithArtifactMarker(summary, skillName);
   const existingId = findExistingArtifactComment(remote, prNumber, skillName);
 
   const payload = JSON.stringify({ body });

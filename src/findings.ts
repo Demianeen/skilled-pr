@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -31,30 +30,16 @@ export const FindingInputSchema = z.object({
 
 export const FindingsInputSchema = z.array(FindingInputSchema);
 
-/** What a review skill produces. Inferred from the zod schema. */
+/**
+ * What a review skill produces. Inferred from the zod schema.
+ *
+ * `Finding` is now an alias for `FindingInput`. Earlier versions extended
+ * the input shape with a `fingerprint` field used to dedupe inline PR
+ * comments across attest re-runs. Inline comments were removed in favour
+ * of a single artifact summary, so fingerprints have no consumer left.
+ */
 export type FindingInput = z.infer<typeof FindingInputSchema>;
-
-/** A finding after the tool has enriched it with a fingerprint. */
-export interface Finding extends FindingInput {
-  fingerprint: string;
-}
-
-// ---------------------------------------------------------------------------
-// Fingerprinting
-//   SHA256(path + ":" + title + ":" + first_20_chars_of_body)
-// ---------------------------------------------------------------------------
-
-export function computeFingerprint(input: {
-  path: string;
-  title: string;
-  body: string;
-}): string {
-  const material = `${input.path}:${input.title}:${input.body.slice(0, 20)}`;
-  // Truncate to 16 hex chars (64 bits): short enough to keep embedded
-  // comment markers readable, long enough that collisions within a single
-  // repo are effectively impossible. Bump if we ever see one.
-  return createHash("sha256").update(material).digest("hex").slice(0, 16);
-}
+export type Finding = FindingInput;
 
 // ---------------------------------------------------------------------------
 // Parsing + validation (zod-backed)
@@ -80,10 +65,7 @@ export function parseFindings(raw: string): Finding[] {
     throw new Error(`${formatIssuePath(issue.path)}: ${issue.message}`);
   }
 
-  return result.data.map((f) => ({
-    ...f,
-    fingerprint: computeFingerprint({ path: f.path, title: f.title, body: f.body }),
-  }));
+  return result.data;
 }
 
 /**
@@ -109,117 +91,37 @@ function formatIssuePath(path: ReadonlyArray<string | number | symbol>): string 
 export { findingsSchemaForPrompt } from "./findings-prompt";
 
 // ---------------------------------------------------------------------------
-// Comment body formatting
-// ---------------------------------------------------------------------------
-
-const SEVERITY_BADGE: Record<Severity, string> = {
-  error: "🔴 **error**",
-  warning: "🟡 **warning**",
-  info: "🔵 **info**",
-};
-
-/** Render a finding as a GitHub PR review comment body with a fingerprint marker. */
-export function formatCommentBody(finding: Finding, skillName: string): string {
-  const parts: string[] = [];
-  parts.push(`${SEVERITY_BADGE[finding.severity]} · ${finding.title}`);
-  parts.push("");
-  parts.push(finding.body);
-
-  if (finding.suggestion) {
-    parts.push("");
-    parts.push("**Suggestion:**");
-    parts.push(finding.suggestion);
-  }
-
-  parts.push("");
-  parts.push(`<sub>via \`skilled-pr\` · skill: \`${skillName}\`</sub>`);
-  parts.push(`<!-- skilled-pr:fp:${finding.fingerprint} -->`);
-
-  return parts.join("\n");
-}
-
-/** Extract the fingerprint from a comment body, or null if not present. */
-export function extractFingerprint(commentBody: string): string | null {
-  const match = commentBody.match(/<!-- skilled-pr:fp:([a-f0-9]+) -->/);
-  return match ? match[1] : null;
-}
-
-// ---------------------------------------------------------------------------
 // Artifact summary comment (per-skill, top-level on the PR)
 //
-// While inline fingerprint-marked comments cover individual findings, the
-// artifact comment is the single per-skill summary that posts even when
-// there are zero findings. Without it, the only PR-visible evidence of a
-// review is a green status check — easy to fabricate or miss. The artifact
-// is the audit trail: it tells reviewers "this skill ran on this commit
-// and produced N findings of severity X/Y/Z."
+// The skill renders the body itself, following the project's `summaryPrompt`
+// (in .skilledpr.jsonc). skilled-pr doesn't have a built-in formatter: the
+// skill knows its own domain (typo-check, security review, French
+// translation, ...) and can produce a summary that suits it. attest just
+// posts the rendered file verbatim (with the artifact marker appended).
 //
 // Posted as a top-level PR comment (issues endpoint), edited (PATCHed) on
 // each re-attestation so there's only ever ONE artifact per skill. Marker
-// `<!-- skilled-pr:artifact:<skill-name> -->` lets us find and update it.
-// Distinct from the inline `:fp:<hash>` marker — no collision risk.
+// `<!-- skilled-pr:artifact:<skill-name> -->` is what lets us find and
+// update the same comment instead of creating a new one each run.
 // ---------------------------------------------------------------------------
 
-/**
- * Render the per-skill artifact summary comment. Always include the marker
- * at end-of-body so subsequent runs can find and edit this comment.
- */
-export function formatArtifactComment(
-  skillName: string,
-  sha: string,
-  findings: Finding[],
-  failOn: FailOn,
-): string {
-  const counts = countBySeverity(findings);
-  const blocking = findingsExceedingThreshold(findings, failOn);
-  const isBlocked = blocking.length > 0;
-  const icon = isBlocked ? "🚫" : findings.length === 0 ? "✅" : "⚠️";
-  const shortSha = sha.slice(0, 7);
-
-  const parts: string[] = [];
-  parts.push(`## ${icon} \`${skillName}\` reviewed \`${shortSha}\``);
-  parts.push("");
-
-  if (findings.length === 0) {
-    parts.push("**Findings:** 0");
-    parts.push("");
-    parts.push("No issues found in the diff.");
-  } else {
-    const breakdown = formatSeverityBreakdown(counts);
-    parts.push(`**Findings:** ${findings.length} (${breakdown})`);
-    parts.push("");
-    if (isBlocked) {
-      const label = blocking.length === 1 ? "finding has" : "findings have";
-      parts.push(
-        `**🚫 This PR is blocked** because \`failOn: ${failOn}\` is set and ${blocking.length} ${label} severity at or above that threshold.`,
-      );
-    } else {
-      parts.push(
-        `Findings exist but none reach the \`failOn: ${failOn}\` threshold; the gate is passing.`,
-      );
-    }
-    parts.push("");
-    parts.push("See inline comments on the PR for details on each finding.");
-  }
-
-  parts.push("");
-  parts.push(`<sub>via \`skilled-pr\` · updated on each attestation</sub>`);
-  parts.push(`<!-- skilled-pr:artifact:${skillName} -->`);
-
-  return parts.join("\n");
+/** HTML marker the artifact comment carries so future attest runs can PATCH-in-place. */
+export function artifactMarker(skillName: string): string {
+  return `<!-- skilled-pr:artifact:${skillName} -->`;
 }
 
 /**
- * Format the severity breakdown for the comment header, e.g.
- *   "1 🔴 error · 2 🟡 warning · 0 🔵 info"  →  "1 🔴 error · 2 🟡 warning"
- * Zero-count severities are omitted so the header stays scannable.
+ * Wrap an arbitrary markdown body with the artifact marker so a future
+ * `attest` run can find and PATCH-update it. Idempotent: if the body
+ * already contains the marker (e.g. the skill's prompt inlines it), no
+ * second copy is appended.
  */
-function formatSeverityBreakdown(counts: SeverityCounts): string {
-  const parts: string[] = [];
-  if (counts.error > 0) parts.push(`${counts.error} 🔴 error`);
-  if (counts.warning > 0) parts.push(`${counts.warning} 🟡 warning`);
-  if (counts.info > 0) parts.push(`${counts.info} 🔵 info`);
-  return parts.join(" · ");
+export function wrapWithArtifactMarker(body: string, skillName: string): string {
+  const marker = artifactMarker(skillName);
+  if (body.includes(marker)) return body;
+  // Trim a trailing newline so the marker sits one blank line below content.
+  const trimmed = body.replace(/\n+$/, "");
+  return `${trimmed}\n\n${marker}\n`;
 }
 
 /**

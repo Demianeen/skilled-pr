@@ -1,14 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
-  computeFingerprint,
   parseFindings,
-  formatCommentBody,
-  extractFingerprint,
   findingsExceedingThreshold,
   countBySeverity,
   buildStatusDescription,
-  formatArtifactComment,
   extractArtifactSkillName,
+  artifactMarker,
+  wrapWithArtifactMarker,
   type Finding,
 } from "../src/findings";
 
@@ -19,43 +17,6 @@ const fp = (sev: Finding["severity"]): Finding => ({
   severity: sev,
   title: "t",
   body: "b",
-  fingerprint: `fp-${sev}`,
-});
-
-// ---------------------------------------------------------------------------
-// computeFingerprint
-// ---------------------------------------------------------------------------
-
-describe("computeFingerprint", () => {
-  test("is deterministic for the same input", () => {
-    const fp1 = computeFingerprint({ path: "a.ts", title: "t", body: "b" });
-    const fp2 = computeFingerprint({ path: "a.ts", title: "t", body: "b" });
-    expect(fp1).toBe(fp2);
-  });
-
-  test("changes when path changes", () => {
-    const a = computeFingerprint({ path: "a.ts", title: "t", body: "b" });
-    const b = computeFingerprint({ path: "b.ts", title: "t", body: "b" });
-    expect(a).not.toBe(b);
-  });
-
-  test("changes when title changes", () => {
-    const a = computeFingerprint({ path: "a.ts", title: "t1", body: "b" });
-    const b = computeFingerprint({ path: "a.ts", title: "t2", body: "b" });
-    expect(a).not.toBe(b);
-  });
-
-  test("ignores body characters beyond the first 20", () => {
-    // Per plan: only the first 20 chars of body are part of the fingerprint.
-    const a = computeFingerprint({ path: "a.ts", title: "t", body: "0123456789abcdefghij_DIFF1" });
-    const b = computeFingerprint({ path: "a.ts", title: "t", body: "0123456789abcdefghij_DIFF2" });
-    expect(a).toBe(b);
-  });
-
-  test("produces a 16-char hex string", () => {
-    const fp = computeFingerprint({ path: "a.ts", title: "t", body: "b" });
-    expect(fp).toMatch(/^[a-f0-9]{16}$/);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -71,7 +32,6 @@ describe("parseFindings", () => {
     expect(result).toHaveLength(1);
     expect(result[0].path).toBe("src/a.ts");
     expect(result[0].line).toBe(10);
-    expect(result[0].fingerprint).toMatch(/^[a-f0-9]{16}$/);
     expect(result[0].side).toBeUndefined();
     expect(result[0].suggestion).toBeUndefined();
   });
@@ -165,68 +125,6 @@ describe("parseFindings", () => {
 });
 
 // ---------------------------------------------------------------------------
-// formatCommentBody + extractFingerprint
-// ---------------------------------------------------------------------------
-
-describe("formatCommentBody", () => {
-  const finding: Finding = {
-    path: "src/a.ts",
-    line: 10,
-    severity: "warning",
-    title: "Unused import",
-    body: "The `foo` import is never used.",
-    fingerprint: "abc123def456",
-  };
-
-  test("includes the title and body", () => {
-    const out = formatCommentBody(finding, "review");
-    expect(out).toContain("Unused import");
-    expect(out).toContain("The `foo` import is never used.");
-  });
-
-  test("includes a fingerprint marker that round-trips", () => {
-    const out = formatCommentBody(finding, "review");
-    expect(out).toContain("<!-- skilled-pr:fp:abc123def456 -->");
-    expect(extractFingerprint(out)).toBe("abc123def456");
-  });
-
-  test("includes the skill name attribution", () => {
-    const out = formatCommentBody(finding, "coderabbit:review");
-    expect(out).toContain("skill: `coderabbit:review`");
-  });
-
-  test("includes a suggestion block when provided", () => {
-    const withSuggestion = { ...finding, suggestion: "Remove line 10" };
-    const out = formatCommentBody(withSuggestion, "review");
-    expect(out).toContain("**Suggestion:**");
-    expect(out).toContain("Remove line 10");
-  });
-
-  test("omits the suggestion block when absent", () => {
-    const out = formatCommentBody(finding, "review");
-    expect(out).not.toContain("Suggestion");
-  });
-
-  test("renders different severity badges", () => {
-    const out = (sev: Finding["severity"]) =>
-      formatCommentBody({ ...finding, severity: sev }, "review");
-    expect(out("error")).toContain("error");
-    expect(out("warning")).toContain("warning");
-    expect(out("info")).toContain("info");
-  });
-});
-
-describe("extractFingerprint", () => {
-  test("returns null when no marker present", () => {
-    expect(extractFingerprint("just a plain comment")).toBeNull();
-  });
-
-  test("ignores malformed markers", () => {
-    expect(extractFingerprint("<!-- skilled-pr:other:abc -->")).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // findingsExceedingThreshold
 // ---------------------------------------------------------------------------
 
@@ -311,101 +209,6 @@ describe("buildStatusDescription", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// formatArtifactComment + extractArtifactSkillName
-// ---------------------------------------------------------------------------
-
-describe("formatArtifactComment", () => {
-  const SHA = "aacd0dd1234567890abcdef0";
-
-  test("zero findings → ✅ icon, 'No issues found' body", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toContain("✅");
-    expect(out).toContain("Findings:** 0");
-    expect(out).toContain("No issues found");
-  });
-
-  test("includes short SHA (7 chars) in the header, not the full one", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toContain("`aacd0dd`");
-    expect(out).not.toContain("aacd0dd1234"); // full SHA shouldn't leak
-  });
-
-  test("includes the skill name verbatim", () => {
-    const out = formatArtifactComment("coderabbit:review", SHA, [], "error");
-    expect(out).toContain("`coderabbit:review`");
-  });
-
-  test("includes the artifact marker at end of body", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).toMatch(/<!-- skilled-pr:artifact:review -->\s*$/);
-  });
-
-  test("findings within failOn threshold → ⚠️ icon, 'passing the gate' message", () => {
-    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
-    expect(out).toContain("⚠️");
-    expect(out).toContain("2 🔵 info");
-    expect(out).toContain("none reach the");
-    expect(out).toContain("passing");
-    expect(out).not.toContain("blocked");
-  });
-
-  test("findings exceed failOn threshold → 🚫 icon, blocked message", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error"), fp("info")], "error");
-    expect(out).toContain("🚫");
-    expect(out).toContain("blocked");
-    expect(out).toContain("failOn: error");
-    expect(out).toContain("1 🔴 error");
-    expect(out).toContain("1 🔵 info");
-  });
-
-  test("multiple blocking findings → pluralizes correctly", () => {
-    const out = formatArtifactComment(
-      "review",
-      SHA,
-      [fp("error"), fp("error"), fp("error")],
-      "error",
-    );
-    expect(out).toContain("3 findings have severity");
-  });
-
-  test("single blocking finding → uses 'has' (singular)", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error")], "error");
-    expect(out).toContain("1 finding has severity");
-  });
-
-  test("severity breakdown omits zero-count buckets", () => {
-    const out = formatArtifactComment("review", SHA, [fp("info"), fp("info")], "error");
-    expect(out).toContain("2 🔵 info");
-    expect(out).not.toContain("🔴 error"); // shouldn't list 0-count error
-    expect(out).not.toContain("🟡 warning"); // shouldn't list 0-count warning
-  });
-
-  test("failOn: warning escalates warnings to blocking", () => {
-    const out = formatArtifactComment("review", SHA, [fp("warning")], "warning");
-    expect(out).toContain("🚫");
-    expect(out).toContain("blocked");
-    expect(out).toContain("failOn: warning");
-  });
-
-  test("failOn: none never blocks", () => {
-    const out = formatArtifactComment("review", SHA, [fp("error"), fp("error")], "none");
-    expect(out).not.toContain("🚫");
-    expect(out).not.toContain("blocked");
-    // With failOn:none, the gate is passing even with errors
-    expect(out).toContain("passing");
-  });
-
-  test("body has guidance to inline comments when findings exist", () => {
-    const out = formatArtifactComment("review", SHA, [fp("info")], "error");
-    expect(out).toContain("inline comments");
-  });
-
-  test("body does NOT mention inline comments when zero findings", () => {
-    const out = formatArtifactComment("review", SHA, [], "error");
-    expect(out).not.toContain("inline comments");
-  });
-});
 
 describe("extractArtifactSkillName", () => {
   test("extracts skill name from a valid artifact marker", () => {
@@ -430,8 +233,54 @@ describe("extractArtifactSkillName", () => {
     expect(extractArtifactSkillName("<!-- skilled-pr:other:foo -->")).toBeNull();
   });
 
-  test("round-trips through formatArtifactComment", () => {
-    const body = formatArtifactComment("plugin:my-skill", "abc1234", [], "error");
+  test("round-trips through wrapWithArtifactMarker", () => {
+    // Use the helper that's actually in the post-summary-required flow:
+    // a skill-rendered body wrapped with the marker should round-trip
+    // back through extractArtifactSkillName, even for namespaced skills.
+    const body = wrapWithArtifactMarker("rendered summary body", "plugin:my-skill");
     expect(extractArtifactSkillName(body)).toBe("plugin:my-skill");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// artifactMarker + wrapWithArtifactMarker
+// ---------------------------------------------------------------------------
+
+describe("artifactMarker", () => {
+  test("renders the HTML marker for a skill", () => {
+    expect(artifactMarker("review")).toBe("<!-- skilled-pr:artifact:review -->");
+  });
+
+  test("preserves plugin-namespaced skill names", () => {
+    expect(artifactMarker("coderabbit:review")).toBe(
+      "<!-- skilled-pr:artifact:coderabbit:review -->",
+    );
+  });
+});
+
+describe("wrapWithArtifactMarker", () => {
+  test("appends the marker when missing", () => {
+    const wrapped = wrapWithArtifactMarker("Body text.", "review");
+    expect(wrapped).toContain("Body text.");
+    expect(wrapped).toContain("<!-- skilled-pr:artifact:review -->");
+    // Round-trips through extractArtifactSkillName so future attest runs find it.
+    expect(extractArtifactSkillName(wrapped)).toBe("review");
+  });
+
+  test("is idempotent: does not append a second marker when already present", () => {
+    const original = "Body text.\n\n<!-- skilled-pr:artifact:review -->";
+    expect(wrapWithArtifactMarker(original, "review")).toBe(original);
+  });
+
+  test("normalises trailing whitespace so the marker sits one blank line below content", () => {
+    // Skills may emit summaries with arbitrary trailing newlines. The marker
+    // should land in a predictable place regardless of input shape.
+    const wrapped = wrapWithArtifactMarker("Body.\n\n\n\n", "review");
+    expect(wrapped).toBe("Body.\n\n<!-- skilled-pr:artifact:review -->\n");
+  });
+
+  test("works with plugin-namespaced skills", () => {
+    const wrapped = wrapWithArtifactMarker("X", "coderabbit:review");
+    expect(extractArtifactSkillName(wrapped)).toBe("coderabbit:review");
   });
 });

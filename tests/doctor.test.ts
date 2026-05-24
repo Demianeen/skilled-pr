@@ -6,6 +6,8 @@ import {
   classifyGitHubRemote,
   classifySkilledPRConfig,
   classifyClaudeHooks,
+  classifyCodexVersion,
+  classifyCodexHooks,
   classifyBranchProtection,
   formatCheck,
   formatDoctorReport,
@@ -291,6 +293,108 @@ describe("classifyClaudeHooks", () => {
       }
     }`;
     const r = classifyClaudeHooks(settings);
+    expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyCodexVersion
+// ---------------------------------------------------------------------------
+
+describe("classifyCodexVersion", () => {
+  test("null stdout (binary missing) -> fail with install hint", () => {
+    const r = classifyCodexVersion(null);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toBe("not found on PATH");
+    expect(r.fix).toContain("Install Codex CLI");
+  });
+
+  test("any non-empty version line -> pass with stdout verbatim", () => {
+    // Codex's --version output format is not stable across builds, so we
+    // accept whatever it prints (parsing for a specific pattern would
+    // false-fail when Codex changes its banner).
+    const r = classifyCodexVersion("codex 0.42.1 (commit abc123)\nhttps://openai.com/codex\n");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe("codex 0.42.1 (commit abc123)");
+  });
+
+  test("bare semver output -> pass (forward-compat)", () => {
+    const r = classifyCodexVersion("0.42.1\n");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toBe("0.42.1");
+  });
+
+  test("empty / whitespace-only stdout -> warn", () => {
+    const r = classifyCodexVersion("\n\n  \n");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("empty");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyCodexHooks
+// ---------------------------------------------------------------------------
+
+describe("classifyCodexHooks", () => {
+  test("null → fail with init hint", () => {
+    const r = classifyCodexHooks(null);
+    expect(r.status).toBe("fail");
+    expect(r.fix).toContain("--for codex");
+  });
+
+  test("invalid JSON → fail", () => {
+    const r = classifyCodexHooks("{ not valid }");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("not valid JSON");
+  });
+
+  test("non-object top-level → fail", () => {
+    const r = classifyCodexHooks("[]");
+    expect(r.status).toBe("fail");
+  });
+
+  test("no hooks array → fail", () => {
+    const r = classifyCodexHooks('{ "models": {} }');
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("no hooks array");
+  });
+
+  test("UserPromptSubmit + skilled-pr hook installed → pass", () => {
+    const settings = JSON.stringify({
+      hooks: [{ event: "UserPromptSubmit", command: "skilled-pr hook" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("UserPromptSubmit");
+  });
+
+  test("hooks array exists but no skilled-pr command → fail", () => {
+    const settings = JSON.stringify({
+      hooks: [{ event: "SessionStart", command: "/usr/local/bin/notify" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("not found");
+  });
+
+  test("wrong event but right command → fail", () => {
+    // skilled-pr hook on PostToolUse won't fire for Codex skills since
+    // Codex doesn't surface them as tool calls. Must be UserPromptSubmit.
+    const settings = JSON.stringify({
+      hooks: [{ event: "PostToolUse", command: "skilled-pr hook" }],
+    });
+    const r = classifyCodexHooks(settings);
+    expect(r.status).toBe("fail");
+  });
+
+  test("tolerates JSONC comments", () => {
+    const settings = `{
+      // skilled-pr Codex hook
+      "hooks": [
+        { "event": "UserPromptSubmit", "command": "skilled-pr hook" }
+      ]
+    }`;
+    const r = classifyCodexHooks(settings);
     expect(r.status).toBe("pass");
   });
 });

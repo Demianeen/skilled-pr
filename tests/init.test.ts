@@ -1,5 +1,5 @@
-import { describe, expect, test, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -424,6 +424,37 @@ describe("init() idempotency", () => {
         e.hooks.some((h) => h.command === "skilled-pr hook"),
     ).length;
     expect(count).toBe(1);
+  });
+
+  test("continues installing healthy harnesses when one harness config is invalid", async () => {
+    mkdirSync(".claude");
+    mkdirSync(".codex");
+    writeFileSync(".claude/settings.json", "{ broken\n");
+    writeFileSync(
+      ".codex/hooks.json",
+      JSON.stringify({ hooks: [{ event: "SessionStart", command: "/usr/local/bin/notify" }] }) + "\n",
+    );
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code}`);
+    }) as never);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let errorText = "";
+    try {
+      await expect(init(["--for", "both"])).rejects.toThrow("process.exit:1");
+      errorText = errorSpy.mock.calls.flat().join("\n");
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(readFileSync(".claude/settings.json", "utf8")).toBe("{ broken\n");
+    expect(JSON.parse(readFileSync(".codex/hooks.json", "utf8")).hooks).toEqual([
+      { event: "SessionStart", command: "/usr/local/bin/notify" },
+      { event: "UserPromptSubmit", command: "skilled-pr hook" },
+    ]);
+    expect(errorText).toContain("Claude Code (.claude/settings.json)");
+    expect(errorText).toContain("invalid JSON");
   });
 
   test("does NOT regenerate an existing .skilledpr.jsonc (preserves user edits)", async () => {

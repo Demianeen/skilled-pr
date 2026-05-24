@@ -1,0 +1,8 @@
+{
+  "hooks": [
+    {
+      "event": "UserPromptSubmit",
+      "command": "skilled-pr hook"
+    }
+  ]
+}

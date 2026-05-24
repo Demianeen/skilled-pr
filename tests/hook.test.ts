@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { Readable } from "node:stream";
 import {
   extractSkillName,
+  extractLeadingSlashCommand,
   slugifySkill,
   buildReminder,
   buildHookOutput,
@@ -69,6 +70,87 @@ describe("extractSkillName", () => {
     expect(extractSkillName({ hook_event_name: "Stop" })).toBeNull();
     expect(extractSkillName({ hook_event_name: "SessionStart" })).toBeNull();
     expect(extractSkillName({})).toBeNull();
+  });
+
+  test("Codex UserPromptSubmit with leading /command resolves the skill name", () => {
+    expect(
+      extractSkillName({
+        hook_event_name: "UserPromptSubmit",
+        prompt: "/review please look at this PR",
+      }),
+    ).toBe("review");
+  });
+
+  test("Codex UserPromptSubmit accepts colon-scoped commands", () => {
+    expect(
+      extractSkillName({
+        hook_event_name: "UserPromptSubmit",
+        prompt: "/coderabbit:review",
+      }),
+    ).toBe("coderabbit:review");
+  });
+
+  test("Codex UserPromptSubmit falls back to user_message when prompt is missing", () => {
+    expect(
+      extractSkillName({
+        hook_event_name: "UserPromptSubmit",
+        user_message: "/review",
+      }),
+    ).toBe("review");
+  });
+
+  test("Codex UserPromptSubmit without a leading slash returns null", () => {
+    expect(
+      extractSkillName({
+        hook_event_name: "UserPromptSubmit",
+        prompt: "please review this code",
+      }),
+    ).toBeNull();
+  });
+
+  test("Codex UserPromptSubmit with empty prompt returns null", () => {
+    expect(
+      extractSkillName({ hook_event_name: "UserPromptSubmit", prompt: "" }),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractLeadingSlashCommand (Codex prompt parsing)
+// ---------------------------------------------------------------------------
+
+describe("extractLeadingSlashCommand", () => {
+  test("matches a plain /skill at the start", () => {
+    expect(extractLeadingSlashCommand("/review")).toBe("review");
+  });
+
+  test("matches /scope:skill", () => {
+    expect(extractLeadingSlashCommand("/coderabbit:review")).toBe("coderabbit:review");
+  });
+
+  test("matches /skill-with-dashes", () => {
+    expect(extractLeadingSlashCommand("/my-custom-skill check this")).toBe("my-custom-skill");
+  });
+
+  test("strips leading whitespace before matching", () => {
+    expect(extractLeadingSlashCommand("   /review")).toBe("review");
+  });
+
+  test("ignores a slash mid-sentence (and/or, http://)", () => {
+    expect(extractLeadingSlashCommand("and/or this is fine")).toBeNull();
+    expect(extractLeadingSlashCommand("see http://example.com")).toBeNull();
+  });
+
+  test("filters out builtin commands", () => {
+    expect(extractLeadingSlashCommand("/help")).toBeNull();
+    expect(extractLeadingSlashCommand("/clear")).toBeNull();
+    expect(extractLeadingSlashCommand("/exit")).toBeNull();
+    expect(extractLeadingSlashCommand("/compact")).toBeNull();
+  });
+
+  test("returns null on empty input", () => {
+    expect(extractLeadingSlashCommand("")).toBeNull();
+    expect(extractLeadingSlashCommand("   ")).toBeNull();
   });
 });
 
@@ -269,6 +351,39 @@ describe("buildHookOutput", () => {
     const parsed = JSON.parse(out!);
     expect(parsed.hookSpecificOutput.additionalContext).toContain(distinct);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("--summary");
+  });
+
+  test("Codex UserPromptSubmit path emits with the right hookEventName", () => {
+    const event = {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "/review please",
+    };
+    const out = buildHookOutput(event, ["review"], PROMPT);
+    expect(out).not.toBeNull();
+    const parsed = JSON.parse(out!);
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("skilled-pr attest");
+  });
+
+  test("Codex UserPromptSubmit with non-required skill returns null", () => {
+    const event = {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "/unrelated-skill",
+    };
+    expect(buildHookOutput(event, ["review"], PROMPT)).toBeNull();
+  });
+
+  test("Codex /help is filtered even if 'help' is in requiredSkills (layered defense)", () => {
+    // Defense in depth: the builtin filter in extractLeadingSlashCommand
+    // runs BEFORE the requiredSkills membership check, so a misconfigured
+    // config that lists "help" can't make `/help` trigger the gate.
+    // Without this guarantee, asking Codex for help inside a repo gated by
+    // skilled-pr would loop the attestation reminder forever.
+    const event = {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "/help",
+    };
+    expect(buildHookOutput(event, ["help"], PROMPT)).toBeNull();
   });
 });
 

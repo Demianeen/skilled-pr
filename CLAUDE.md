@@ -1,6 +1,6 @@
 # CLAUDE.md — skilled-pr
 
-Project-level instructions for Claude Code and agents working on this repo.
+Project-level instructions for Claude Code, Codex, and agents working on this repo.
 
 ## Commit convention
 
@@ -30,7 +30,7 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 | `refactor` | Code change that neither adds a feature nor fixes a bug |
 | `perf` | A change that improves performance |
 | `test` | Adding or updating tests only |
-| `docs` | Documentation-only changes (README, CLAUDE.md, code comments) |
+| `docs` | Documentation-only changes (README, CLAUDE.md/AGENTS.md, code comments) |
 | `build` | Changes to the build system or dependencies (`pnpm-lock.yaml`, `package.json`, `tsup.config.ts`) |
 | `ci` | Changes to CI configuration (`.github/workflows/*`) |
 | `chore` | Everything else that doesn't modify src/ or tests/ |
@@ -44,7 +44,7 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 - `fix: dedupe silently broken — gh api --jq does not accept --arg`
 - `refactor: switch JSONC parser from regex to microsoft/jsonc-parser`
 - `test: cover strings containing comment syntax in parseConfig`
-- `docs: add CLAUDE.md with angular commit convention`
+- `docs: add agent instructions with angular commit convention`
 
 ❌ Avoid:
 - `update config parser` — missing `<type>:` prefix
@@ -57,10 +57,12 @@ This project follows the [Angular commit convention](https://www.conventionalcom
 Every PR to `main` must pass the `Skilled PR / review` commit status. The flow
 is plug-and-play — you don't run `attest` by hand:
 
-1. In Claude Code, invoke a required review skill (e.g. `/review`). The
+1. In Claude Code or Codex, invoke a required review skill (e.g. `/review`). The
    skills listed under `requiredSkills` in `.skilledpr.jsonc` are the gate.
-2. The `skilled-pr hook` (installed into `.claude/settings.json` by
-   `skilled-pr init`) fires on `PostToolUse:Skill` / `UserPromptExpansion`
+2. The `skilled-pr hook` (installed into `.claude/settings.json` and/or
+   `.codex/hooks.json` by `skilled-pr init`) fires on harness-specific events
+   (`PostToolUse:Skill` / `UserPromptExpansion` for Claude Code,
+   `UserPromptSubmit` for Codex)
    and injects a system reminder telling the model to:
      - write findings to `.review/findings-<skill-slug>.json` as a JSON array
        (schema in `src/findings.ts`),
@@ -86,7 +88,7 @@ If you need to bypass the hook (debugging, scripted CI, dogfooding this
 repo's own CLI without `npm link`-ing it globally):
 
 ```
-pnpm dev attest --skill review [--findings <path>]
+pnpm dev attest --skill review [--findings <path>] [--summary <path>]
 ```
 
 (`pnpm dev` is `tsx src/cli.ts` per `package.json` — runs TypeScript

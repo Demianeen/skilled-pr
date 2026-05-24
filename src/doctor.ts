@@ -336,6 +336,109 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
   };
 }
 
+const WHY_CODEX =
+  "Codex's `.codex/hooks.json` only fires when Codex itself is on PATH; without the binary, the hook config is inert and `/review` (or any skill that should attest) silently does nothing. doctor only nags about codex when this repo has a `.codex/` directory; if you don't use Codex, this check is skipped.";
+
+/**
+ * Classify `codex --version` output. Output format is not strictly
+ * standardised (different Codex builds print different things), so we
+ * accept any non-empty stdout as "installed" and report it verbatim
+ * instead of parsing for a specific version pattern.
+ *
+ * Only invoked by the orchestrator when `.codex/` exists in the repo;
+ * users who don't run Codex never see this check.
+ */
+export function classifyCodexVersion(stdout: string | null): CheckResult {
+  if (stdout === null) {
+    return {
+      name: "codex installed",
+      status: "fail",
+      detail: "not found on PATH",
+      fix: "Install Codex CLI (e.g. `npm install -g @openai/codex`) or remove `.codex/` if you don't use Codex",
+      why: WHY_CODEX,
+    };
+  }
+  const firstLine = stdout.trim().split("\n")[0];
+  if (!firstLine) {
+    return {
+      name: "codex installed",
+      status: "warn",
+      detail: "empty version output",
+      fix: "Verify codex is working: codex --version",
+      why: WHY_CODEX,
+    };
+  }
+  return { name: "codex installed", status: "pass", detail: firstLine, why: WHY_CODEX };
+}
+
+const WHY_CODEX_HOOKS =
+  "Codex skills load via progressive disclosure (no Skill tool to match on), so skilled-pr hooks the UserPromptSubmit event instead. When you type a /skill-name, the hook checks it against requiredSkills and injects the attestation reminder. Without this hook, the gate cannot enforce reviews in Codex sessions.";
+
+/**
+ * Classify whether .codex/hooks.json has skilled-pr's UserPromptSubmit hook.
+ * Mirrors classifyClaudeHooks but for Codex's flatter schema.
+ */
+export function classifyCodexHooks(rawContent: string | null): CheckResult {
+  if (rawContent === null) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json not found",
+      fix: "skilled-pr init --for codex  (or just `skilled-pr init` if .codex/ exists)",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(rawContent, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json is not valid JSON",
+      fix: "Fix the syntax error or re-run `skilled-pr init --for codex`",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: ".codex/hooks.json top-level is not an object",
+      fix: "Fix the file shape or re-run `skilled-pr init --for codex`",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const settings = parsed as { hooks?: Array<{ event?: string; command?: string }> };
+  const hooks = settings.hooks;
+  if (!Array.isArray(hooks)) {
+    return {
+      name: "Codex hooks",
+      status: "fail",
+      detail: "no hooks array in .codex/hooks.json",
+      fix: "skilled-pr init --for codex",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  const hasOurHook = hooks.some(
+    (h) => h?.event === "UserPromptSubmit" && h?.command === "skilled-pr hook",
+  );
+  if (hasOurHook) {
+    return {
+      name: "Codex hooks",
+      status: "pass",
+      detail: "UserPromptSubmit installed",
+      why: WHY_CODEX_HOOKS,
+    };
+  }
+  return {
+    name: "Codex hooks",
+    status: "fail",
+    detail: "skilled-pr UserPromptSubmit hook not found",
+    fix: "skilled-pr init --for codex  (idempotent)",
+    why: WHY_CODEX_HOOKS,
+  };
+}
+
 const WHY_BRANCH_PROTECTION =
   "GitHub status checks post on every attest, but only branch protection actually GATES the merge button. Without 'Skilled PR' in required checks, the green check is decorative — PRs can merge with failing reviews. `skilled-pr enable-gate` automates this.";
 
@@ -551,9 +654,61 @@ export async function doctor(args: string[] = []) {
   const configCheck = classifySkilledPRConfig(config);
   results.push(configCheck);
 
-  // 6. Claude Code hooks
-  const settings = await readFileOrNull(".claude/settings.json");
-  results.push(classifyClaudeHooks(settings));
+  // 6. Harness hooks: Claude Code, Codex, or both.
+  //    Policy: always emit one line per harness's hook config, even when
+  //    that harness isn't set up in this repo. Silent skipping leaves the
+  //    user unable to distinguish "I don't use this harness" from "doctor
+  //    has a bug" or "this version doesn't check that harness." The skip
+  //    status (with a fix hint) signals "we know how to check this, but
+  //    you don't appear to use it; here's what to do if you do."
+  //
+  //    The binary checks (codex installed, etc.) stay conditional on the
+  //    dir existing - no value in reporting whether `codex` is on PATH for
+  //    a user who only runs Claude Code, and vice versa.
+  //
+  //    Back-compat: when NEITHER .claude/ nor .codex/ exists, default to
+  //    actually running the Claude hooks check (preserves the historical
+  //    "run init" message first-time users got before Codex existed).
+  const claudePresent = existsSync(".claude");
+  const codexPresent = existsSync(".codex");
+  if (claudePresent) {
+    const settings = await readFileOrNull(".claude/settings.json");
+    results.push(classifyClaudeHooks(settings));
+  } else if (codexPresent) {
+    // Codex-only repo: report Claude as skipped instead of failing.
+    results.push({
+      name: "Claude Code hooks",
+      status: "skip",
+      detail: "no .claude/ in this repo (Claude Code is optional)",
+      fix: "If you use Claude Code: skilled-pr init --for claude",
+      why: WHY_HOOKS,
+    });
+  } else {
+    // Neither harness present: back-compat default for first-time users.
+    const settings = await readFileOrNull(".claude/settings.json");
+    results.push(classifyClaudeHooks(settings));
+  }
+  if (codexPresent) {
+    // Run the binary check before the hooks check so failure order matches
+    // the dependency direction: if codex isn't installed, the hook config
+    // never fires regardless of its contents.
+    const codexVersion = tryRun(["codex", "--version"]);
+    results.push(classifyCodexVersion(codexVersion.stdout));
+
+    const codexSettings = await readFileOrNull(".codex/hooks.json");
+    results.push(classifyCodexHooks(codexSettings));
+  } else {
+    // Codex isn't set up here. Surface a skip line so the user knows we
+    // would check it; the fix hint nudges them toward init if they DO
+    // want Codex coverage.
+    results.push({
+      name: "Codex hooks",
+      status: "skip",
+      detail: "no .codex/ in this repo (Codex is optional)",
+      fix: "If you use Codex: skilled-pr init --for codex",
+      why: WHY_CODEX_HOOKS,
+    });
+  }
 
   // 7. Branch protection (only if we have a GitHub remote AND gh is authed)
   if (

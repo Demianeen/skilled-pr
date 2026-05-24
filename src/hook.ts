@@ -1,30 +1,40 @@
 // skilled-pr hook
 //
-// Invoked by Claude Code as a PostToolUse / UserPromptExpansion command hook.
+// Invoked by the host harness (Claude Code or Codex) as a hook command.
 // Reads the hook event from stdin, decides whether the invoked skill is one
-// listed in `.skilledpr.jsonc`'s `requiredSkills`, and — if so — emits a
+// listed in `.skilledpr.jsonc`'s `requiredSkills`, and if so emits a
 // `hookSpecificOutput.additionalContext` JSON payload that injects an
 // attestation-instruction system reminder into the model's next turn.
 //
-// Why this exists: see the architecture discussion. Short version: the hook
-// turns "Claude just loaded a required review skill" into "Claude is told to
-// write findings + run `skilled-pr attest`" without modifying any skill.
+// Why this exists: the hook turns "the user just invoked a required review
+// skill" into "the agent is told to write findings + run `skilled-pr
+// attest`" without modifying any skill.
 //
-// Stdin schemas (from https://code.claude.com/docs/en/hooks):
+// Stdin schemas:
 //
-//   PostToolUse with tool_name = "Skill":
-//     { hook_event_name: "PostToolUse",
-//       tool_name: "Skill",
-//       tool_input: { skill: "<skill-name>" }, ... }
+//   Claude Code (https://code.claude.com/docs/en/hooks):
+//     PostToolUse with tool_name = "Skill":
+//       { hook_event_name: "PostToolUse",
+//         tool_name: "Skill",
+//         tool_input: { skill: "<skill-name>" }, ... }
+//     UserPromptExpansion (covers the /slash-command path):
+//       { hook_event_name: "UserPromptExpansion",
+//         command_name: "<skill-name>", ... }
 //
-//   UserPromptExpansion (covers the /slash-command path):
-//     { hook_event_name: "UserPromptExpansion",
-//       command_name: "<skill-name>", ... }
+//   Codex:
+//     Codex skills load via progressive disclosure (the agent reads the
+//     SKILL.md file with the same file tool it uses for everything else),
+//     so there is no PostToolUse:Skill event to match on. Instead we hook
+//     UserPromptSubmit and look for a leading slash-command in the prompt:
+//       { hook_event_name: "UserPromptSubmit",
+//         prompt: "/review please" }
+//     A leading `/word` (or `/scope:word`) is the canonical invocation;
+//     natural-language "review this PR" is not gated by skilled-pr.
 //
 // We bail (exit 0, no output) for any event that doesn't resolve to a known
-// required skill — including unrelated PostToolUse events on Bash/Read/etc.,
-// non-required Skill invocations, and `command_source: "builtin"` slash
-// commands like /help.
+// required skill: unrelated PostToolUse events, non-required Skill
+// invocations, UserPromptSubmit without a leading slash command, and
+// `command_source: "builtin"` slash commands like /help.
 
 import { loadConfig } from "./config";
 // Pulled from `findings-prompt` (not `findings`) on purpose: the hook fires
@@ -114,6 +124,30 @@ interface HookEvent {
   tool_name?: string;
   tool_input?: { skill?: string };
   command_name?: string;
+  /** Codex UserPromptSubmit. The full text the user just submitted. */
+  prompt?: string;
+  /** Codex UserPromptSubmit fallback field name some hook payloads use. */
+  user_message?: string;
+}
+
+/**
+ * Extract the skill name from a leading slash-command in a Codex
+ * UserPromptSubmit prompt. Accepts `/skill`, `/scope:skill`, `/skill-with-dashes`.
+ * Returns null if no leading slash-command is present. Exported for tests.
+ *
+ * Matching is anchored to the start of the trimmed prompt so a stray `/`
+ * mid-sentence (e.g. "and/or") doesn't trigger.
+ */
+export function extractLeadingSlashCommand(prompt: string): string | null {
+  const trimmed = prompt.trimStart();
+  const match = /^\/([\w:-]+)/.exec(trimmed);
+  if (!match) return null;
+  // Filter out Codex/Claude builtins so /help, /clear, etc. never trigger
+  // the gate. Required skills can't be named after a builtin anyway, but
+  // bailing early skips the config read for the common case.
+  const BUILTINS = new Set(["help", "clear", "exit", "quit", "model", "compact"]);
+  if (BUILTINS.has(match[1])) return null;
+  return match[1];
 }
 
 /**
@@ -121,13 +155,21 @@ interface HookEvent {
  * any event we don't care about, including events with bad shape.
  */
 export function extractSkillName(event: HookEvent): string | null {
+  // Claude Code: agent-invoked Skill tool.
   if (event.hook_event_name === "PostToolUse" && event.tool_name === "Skill") {
     const skill = event.tool_input?.skill;
     return typeof skill === "string" && skill.length > 0 ? skill : null;
   }
+  // Claude Code: user-typed /slash-command.
   if (event.hook_event_name === "UserPromptExpansion") {
     const cmd = event.command_name;
     return typeof cmd === "string" && cmd.length > 0 ? cmd : null;
+  }
+  // Codex: user-typed /slash-command in the submitted prompt.
+  if (event.hook_event_name === "UserPromptSubmit") {
+    const text = event.prompt ?? event.user_message;
+    if (typeof text !== "string" || text.length === 0) return null;
+    return extractLeadingSlashCommand(text);
   }
   return null;
 }
@@ -193,9 +235,14 @@ export function buildReminder(skillName: string, summaryPrompt: string): string 
 }
 
 /**
- * Format the JSON payload Claude Code expects on stdout to inject an
+ * Format the JSON payload the host harness expects on stdout to inject an
  * additionalContext system reminder. Returns null when nothing should be
  * injected (caller should write nothing in that case).
+ *
+ * Claude Code and Codex both consume `hookSpecificOutput.additionalContext`
+ * (Codex's hook spec is intentionally Claude-compatible); the only
+ * per-harness variance is which event names they emit, which we already
+ * gate on above.
  */
 export function buildHookOutput(
   event: HookEvent,
@@ -207,7 +254,12 @@ export function buildHookOutput(
   if (!requiredSkills.includes(skillName)) return null;
 
   const eventName = event.hook_event_name;
-  if (eventName !== "PostToolUse" && eventName !== "UserPromptExpansion") return null;
+  const KNOWN_EVENTS = new Set([
+    "PostToolUse",
+    "UserPromptExpansion",
+    "UserPromptSubmit",
+  ]);
+  if (typeof eventName !== "string" || !KNOWN_EVENTS.has(eventName)) return null;
 
   return JSON.stringify({
     hookSpecificOutput: {

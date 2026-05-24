@@ -43,6 +43,7 @@
   "files": [
     "dist",
     "docs",
+    "schema",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

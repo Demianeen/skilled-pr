@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Demianeen/skilled-pr/schema/v1.json",
+  "title": "skilled-pr config (v1)",
+  "description": "Per-repo configuration for skilled-pr. Lives at .skilledpr/config.jsonc. Required: schemaVersion. All other fields have built-in defaults.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor autocompletion. Conventionally points at the sibling schema.json copied here by `skilled-pr init`."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "default": 1,
+      "description": "Schema version. v1 is the only currently supported value. Bumped on every breaking config change.",
+      "examples": [1]
+    },
+    "requiredSkills": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": ["review"],
+      "description": "Which review skills must run before the PR can merge. Each name matches the skill identifier (e.g. \"review\", \"coderabbit:review\", \"gstack:cso\").",
+      "examples": [["review"], ["review", "coderabbit:review"]]
+    },
+    "statusName": {
+      "type": "string",
+      "minLength": 1,
+      "default": "Skilled PR",
+      "description": "GitHub status-check name. Each required skill produces one status with context `<statusName> / <skill>` (e.g. \"Skilled PR / review\").",
+      "examples": ["Skilled PR", "PR Quality Gate"]
+    },
+    "failOn": {
+      "type": "string",
+      "enum": ["error", "warning", "none"],
+      "default": "error",
+      "description": "Severity gate. \"error\" fails when any finding is error-severity; \"warning\" fails on error OR warning; \"none\" never fails (advisory-only).",
+      "examples": ["error", "warning", "none"]
+    },
+    "summaryPrompt": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "default": null,
+      "description": "Per-skill prompt embedded in the hook reminder. Tells the skill how to render `.review/summary-<skill>.md`, which becomes the PR's artifact comment. null → built-in default (see DEFAULT_SUMMARY_PROMPT in src/config.ts).",
+      "examples": [null, "Render findings as a markdown table with severity, file:line, and title."]
+    },
+    "briefingPrompt": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "default": null,
+      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "examples": [null]
+    },
+    "autoReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Auto-review behaviour (PR #4). All fields optional with built-in defaults.",
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "enum": ["manual", "on-push"],
+          "default": "manual",
+          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = automatic via PR #2's GH Action.",
+          "examples": ["manual", "on-push"]
+        },
+        "execution": {
+          "type": "string",
+          "enum": ["subagent", "main-agent"],
+          "default": "subagent",
+          "description": "Where the skill runs. \"subagent\" launches an isolated context; \"main-agent\" inlines the review into the orchestrator.",
+          "examples": ["subagent"]
+        },
+        "parallel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether multiple required skills run in parallel (or serially)."
+        },
+        "sessionBriefing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pass session briefing context (purpose, constraints, decisions, exclusions) to the reviewing skill via briefingPrompt."
+        },
+        "skipPolicy": {
+          "type": "string",
+          "enum": ["agent-decides", "always-fire"],
+          "default": "agent-decides",
+          "description": "Whether the agent may skip review on trivial diffs (\"agent-decides\") or must always run (\"always-fire\")."
+        },
+        "askBeforeFiring": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ask the user before firing a required skill that wasn't explicitly invoked. Useful when you want manual control over which reviews run."
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "default": [],
+      "description": "Per-context rule overlays. Evaluated in order; first match wins. Each rule's `match` array OR's together; keys within a single match block AND together. Optional override fields (requiredSkills, failOn, summaryPrompt) fall back to top-level defaults when absent in a rule.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["match"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable rule name shown by `skilled-pr show`. Optional but encouraged for clarity.",
+            "examples": ["stricter review for release branches"]
+          },
+          "match": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Array of match blocks. Blocks OR together (matchA OR matchB); keys within a single block AND together (branch AND author AND labels).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "branch": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Branch name with optional `*` glob (e.g. \"release-*\", \"feat/*\"). Anchored on both ends.",
+                  "examples": ["main", "release-*"]
+                },
+                "author": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Exact PR author login (case-sensitive). No wildcards.",
+                  "examples": ["dependabot[bot]"]
+                },
+                "labels": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Required PR labels. The PR must have ALL listed labels (may have additional labels too).",
+                  "examples": [["security"]]
+                }
+              }
+            }
+          },
+          "requiredSkills": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Override the top-level requiredSkills when this rule matches."
+          },
+          "failOn": {
+            "type": "string",
+            "enum": ["error", "warning", "none"],
+            "description": "Override the top-level failOn when this rule matches."
+          },
+          "summaryPrompt": {
+            "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+            "description": "Override the top-level summaryPrompt. null = use built-in default."
+          }
+        }
+      }
+    }
+  }
+}

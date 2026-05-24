@@ -1,0 +1,69 @@
+{
+  // JSON Schema reference for editor autocompletion. The schema file is
+  // copied here by `skilled-pr init`; `skilled-pr doctor` warns if it
+  // drifts from the version bundled with the CLI.
+  "$schema": "./schema.json",
+
+  // Schema version. Bumped by skilled-pr on every breaking config change.
+  // To see the active value: `skilled-pr show schemaVersion`
+  "schemaVersion": 1,
+
+  // Which review skills must run before merge.
+  // To see the active value: `skilled-pr show requiredSkills`
+  "requiredSkills": ["review"],
+
+  // The name shown on GitHub status checks (e.g. "Skilled PR / review").
+  "statusName": "Skilled PR",
+
+  // When to fail the check based on finding severity:
+  //   "error"   - fail if any finding has severity "error" (default)
+  //   "warning" - fail on either "error" or "warning"
+  //   "none"    - always succeed if the skill attested (advisory mode)
+  "failOn": "error",
+
+  // Per-skill summary prompt. null → uses the built-in default; set a
+  // non-empty string to override per project. Tune per project: a
+  // typo-check skill wants a different format than a security-review
+  // skill; one transport serves both.
+  //
+  // This project uses the built-in default verbatim; null is the
+  // shorter way to say so. To see the rendered value:
+  //   `skilled-pr show summaryPrompt`
+  "summaryPrompt": null,
+
+  // Session-briefing prompt used by auto-review (PR #4) when launching a
+  // subagent. null → uses the built-in slot-fill template. Override only
+  // if you want a different way of relaying session context to the
+  // reviewing agent.
+  //
+  // To see the active value (resolves null → default):
+  //   `skilled-pr show briefingPrompt`
+  "briefingPrompt": null,
+
+  // Auto-review behaviour (PR #4 will implement). Optional; defaults
+  // shown here. All fields are independent — change one without changing
+  // the others.
+  "autoReview": {
+    "trigger": "manual",
+    "execution": "subagent",
+    "parallel": true,
+    "sessionBriefing": true,
+    "skipPolicy": "agent-decides",
+    "askBeforeFiring": false
+  },
+
+  // Per-context overrides. Each rule's `match` array OR's together;
+  // keys within a single block (branch + author + labels) AND together.
+  // First matching rule wins. Empty array (the default) → top-level
+  // values apply to every PR.
+  //
+  // Example (uncomment to use):
+  //   "rules": [
+  //     {
+  //       "name": "stricter review for release branches",
+  //       "match": [{ "branch": "release-*" }],
+  //       "failOn": "warning"
+  //     }
+  //   ]
+  "rules": []
+}

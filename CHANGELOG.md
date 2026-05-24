@@ -5,6 +5,63 @@ All notable changes to `skilled-pr` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠ BREAKING CHANGES
+
+- **Config moved to `.skilledpr/config.jsonc` (v1 schema).** The
+  per-repo config now lives at `.skilledpr/config.jsonc` instead of
+  `.skilledpr.jsonc` at the repo root, and carries a required
+  `"schemaVersion": 1` sentinel. Loading the legacy root file
+  hard-errors with a migration hint. PR #2 will ship an automated
+  migrator; until then, run `skilled-pr init` to regenerate.
+
+### Added
+
+- **`schemaVersion` + JSON Schema.** The v1 config ships a JSON
+  Schema (`.skilledpr/schema.json`, copied from the CLI's bundled
+  `schema/v1.json`) so editors with `$schema`-aware JSON support
+  (VSCode, IntelliJ, nvim) get autocompletion and field validation
+  out of the box.
+- **Per-context `rules`.** Each rule's `match` array OR's together;
+  keys within a single block (`branch` glob, `author` exact match,
+  `labels` subset) AND together. Optional override fields
+  (`requiredSkills`, `failOn`, `summaryPrompt`) fall back to top-level
+  defaults when absent. First matching rule wins. Enables patterns
+  like "stricter review on release branches", "dependabot bypass",
+  "security-labeled PRs require additional skills".
+- **`skilled-pr show`.** Inspects the active config + resolved profile
+  for the current (or a hypothetical) PR context. With a positional
+  field name (`show summaryPrompt`), prints type/default/source/value
+  for that field plus the description from the JSON schema. With
+  `--reminder`, prints the literal reminder body the hook would
+  inject.
+- **`briefingPrompt`.** Slot-fill template used by the upcoming
+  auto-review feature (PR #4) to relay session context to a reviewing
+  subagent. Defaults to a built-in template; override to customise.
+- **`autoReview` config block.** Optional settings consumed by PR #4
+  (trigger, execution mode, parallelism, skip policy, askBeforeFiring).
+  Parses cleanly in v1 even though enforcement lands later.
+- **`pnpm bench` / `pnpm bench:check`.** Hook hot-path benchmarks
+  plus a p95-under-10ms perf budget test. Inline path measures at
+  ~0.005ms mean vs ~222ms for a hypothetical CLI-subprocess design
+  (~49,000x faster), which is why skilled-pr's hook is in-process.
+- **`init --install-mode {local|global|skip}`.** Controls whether
+  init installs skilled-pr itself (and which package manager to use,
+  detected by lockfile). Interactive prompt when stdin is a TTY;
+  non-interactive defaults: local if `package.json` is present, else
+  global.
+
+### Changed
+
+- **Doctor checks v1 fields.** New classifiers: `classifySchemaVersion`,
+  `classifyBundledSchema`, `classifyRulePatterns`,
+  `classifyReferencedSkills`. The config check now also detects the
+  legacy root file and surfaces a migration error.
+- **Reminder builder extracted to `src/resolve.ts`.** `formatReminder`
+  and `resolveProfile` are now pure library code consumed by the hook,
+  `show`, attest (for rule-aware failOn), and the perf bench fixture.
+
 ## [0.4.0](https://github.com/Demianeen/skilled-pr/compare/v0.3.0...v0.4.0) (2026-05-23)
 
 

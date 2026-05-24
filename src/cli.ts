@@ -39,6 +39,11 @@ switch (command) {
     await enableGate();
     break;
   }
+  case "show": {
+    const { show } = await import("./show");
+    await show(process.argv.slice(3));
+    break;
+  }
   default:
     console.log(`skilled-pr v${pkg.version} - Open review transport for AI-native development
 
@@ -59,6 +64,13 @@ Usage:
   skilled-pr enable-gate             Add the Skilled PR status checks to your
                                      default branch's protection rules.
                                      Additive; preserves any existing rules.
+  skilled-pr show [<field>]          Inspect the active config and rule
+                  [--branch <name>]  resolution. With no args, prints the
+                  [--author <name>]  config overview + resolved profile for
+                  [--labels <list>]  the current branch. With a field name,
+                  [--reminder]       prints type/default/source for that field.
+                                     With --reminder, also prints the literal
+                                     reminder body the hook would inject.
   skilled-pr hook                    Internal: harness hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review

@@ -1,44 +1,55 @@
 // skilled-pr init
 // Sets up Skilled PR in the current repo.
 //
-// What this does:
-//   1. Creates `.skilledpr.jsonc` with sensible defaults (if missing).
-//   2. Installs hooks into every detected harness (Claude Code, Codex,
-//      both). Detection scans for `.claude/` and `.codex/` directories.
-//      Override with `--for claude|codex|both` for explicit control.
-//   3. Ensures `.review/` is gitignored.
-//   4. Prints next-step guidance.
+// What this does (in order):
+//   1. Choose install mode (local devDependency vs global) — flag,
+//      interactive prompt, or auto-detect heuristic.
+//   2. Install skilled-pr@<version> via the detected package manager
+//      (unless --install-mode=skip).
+//   3. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
+//   4. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
+//      pick up autocompletion.
+//   5. Install hooks into every detected harness (Claude Code, Codex,
+//      both). Detection scans for `.claude/` and `.codex/`. Override
+//      with `--for claude|codex|both`.
+//   6. Ensure `.review/` is gitignored.
+//   7. Print next-step guidance.
 //
-// All the per-harness specifics (where the config file lives, what schema it
-// uses, how to merge without clobbering) live in `src/harness/*`. This file
-// is intentionally just orchestration.
+// All the per-harness specifics live in `src/harness/*`. This file is
+// orchestration + the install-mode UI.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
+
 import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
 
 import { parseInitArgs } from "./args";
-import { generateDefaultConfig } from "./config";
+import { CONFIG_PATH, generateDefaultConfig } from "./config";
 import type { Harness } from "./harness";
 import { detectHarnesses, resolveHarnessOverride } from "./harness";
+import { buildInstallArgv, detectPackageManager, type PackageManager } from "./pm-detect";
 
-// Re-export legacy types so existing imports (tests, doctor.ts) keep working
-// while we migrate consumers to the harness module.
+// Re-export legacy types so existing imports (tests, doctor.ts) keep working.
 export type { ClaudeSettings } from "./harness";
 export { mergeSkilledPRHooks } from "./harness";
 
+const SCHEMA_PATH = ".skilledpr/schema.json";
+
 /**
  * Write `contents` to `path`, creating the parent directory if needed.
- * Both `.claude/` and `.codex/` may not exist in a fresh repo; we mkdir
- * up-front when missing.
- *
- * Atomic via write-temp + rename: writeFileSync alone is not atomic, so a
- * Ctrl-C or OOM kill mid-write would leave the file half-written. The next
- * init run would then parse the corrupted JSON via jsonc-parser's
- * error-recovery mode and merge into the partial result, silently
- * destroying the user's settings. POSIX `rename` is atomic on the same
- * filesystem; Windows's equivalent (MoveFileExW with MOVEFILE_REPLACE_EXISTING)
- * is what Node's renameSync wraps.
+ * Atomic via write-temp + rename so a Ctrl-C mid-write never leaves a
+ * half-written file behind.
  */
 export function writeFileWithMkdir(path: string, contents: string) {
   const dir = dirname(path);
@@ -50,12 +61,10 @@ export function writeFileWithMkdir(path: string, contents: string) {
     writeFileSync(tmp, contents);
     renameSync(tmp, path);
   } catch (err) {
-    // Best-effort cleanup so we never leave a dangling .tmp behind for
-    // the next run to confuse with an in-progress write.
     try {
       unlinkSync(tmp);
     } catch {
-      // unlinkSync throws if tmp doesn't exist; that's fine - we're cleaning up.
+      // unlinkSync throws if tmp doesn't exist; that's fine.
     }
     throw err;
   }
@@ -64,59 +73,35 @@ export function writeFileWithMkdir(path: string, contents: string) {
 /**
  * Idempotently ensure `entry` appears on its own line in the repo's
  * `.gitignore`. Creates `.gitignore` at the repo root if it doesn't
- * exist. Matches with newline-bounded equality so `entry: ".review/"`
- * does NOT consider an existing `node_modules/.review/` line a match.
- *
- * Used by init to add `.review/` so per-review artifacts (findings.json,
- * summary-<slug>.md) don't get committed.
+ * exist. Newline-bounded match so `.review/` doesn't false-positive on
+ * `node_modules/something/.review/`.
  */
 export function ensureGitignoreEntry(entry: string) {
   const path = ".gitignore";
   if (!existsSync(path)) {
-    // Fresh repo with no .gitignore: create it. Skills' artifacts going
-    // straight into git on day one would make noisy PRs.
     writeFileWithMkdir(path, `${entry}\n`);
     console.log(`✓ Created ${path} with \`${entry}\``);
     return;
   }
   const current = readFileSync(path, "utf8");
-  // Newline-bounded match so `.review/` doesn't false-positive on
-  // `node_modules/something/.review/`. Also matches both `entry` and
-  // `entry\r\n` (Windows line endings) and the trailing-newline-omitted
-  // case at EOF.
   const lines = current.split(/\r?\n/);
   if (lines.includes(entry)) {
     console.log(`✓ ${path} already ignores \`${entry}\``);
     return;
   }
-  // Append the entry. Ensure the existing file ends with a newline first
-  // so the new entry lands on its own line instead of mid-line-joined.
   const sep = current.endsWith("\n") ? "" : "\n";
   writeFileSync(path, `${current}${sep}${entry}\n`);
   console.log(`✓ Added \`${entry}\` to ${path}`);
 }
 
 /**
- * For a single harness: read its existing config (if any), merge skilled-pr's
- * hook entry, write back. Prints a one-line status to stdout. Returns true if
- * the file was modified, false if nothing changed (already wired up).
- *
- * Throws when the existing file has JSON syntax errors. The caller decides
- * whether to continue with other harnesses before exiting non-zero.
+ * For a single harness: read existing config (if any), merge skilled-pr's
+ * hook entry, write back. Returns true if modified, false if no-op.
  */
 function installForHarness(harness: Harness): boolean {
   let existing: unknown = null;
   if (existsSync(harness.settingsPath)) {
     const raw = readFileSync(harness.settingsPath, "utf8");
-    // jsonc-parser tolerates // and /* */ comments some users keep in their
-    // settings; standard JSON.parse would throw on those.
-    //
-    // jsonc-parser does best-effort error recovery by default: bad braces
-    // return a partial parse, no throw. Without explicit error checking we'd
-    // happily merge into the partial result and overwrite the user's file,
-    // silently destroying broken-but-recoverable content. Pass an errors
-    // array and refuse to proceed if parsing failed; the user can fix the
-    // syntax error or rename the file out of the way.
     const errors: ParseError[] = [];
     existing = parseJsonc(raw, errors, { allowTrailingComma: true });
     if (errors.length > 0) {
@@ -142,17 +127,161 @@ function installForHarness(harness: Harness): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Install mode
+// ---------------------------------------------------------------------------
+
+type InstallChoice = "local" | "global" | "skip";
+
+function parseInstallChoice(raw: string | undefined): InstallChoice | null {
+  if (raw === undefined) return null;
+  if (raw === "local" || raw === "global" || raw === "skip") return raw;
+  return null;
+}
+
+/**
+ * Auto-detect a sensible default install mode. Used when no flag is
+ * passed AND stdin isn't a TTY (so we can't ask).
+ *
+ * Heuristic: `package.json` present in the cwd → "local" (the user
+ * wants a per-repo install pinned in devDependencies); absent →
+ * "global" (no Node project here, install once for the user).
+ */
+function detectDefaultInstallMode(cwd: string = process.cwd()): InstallChoice {
+  return existsSync(join(cwd, "package.json")) ? "local" : "global";
+}
+
+/**
+ * Read the package's own version at runtime. Looking it up from
+ * package.json (not a build-time constant) means a published skilled-pr
+ * always pins to its own version on install, even after re-bundling.
+ */
+function readOwnVersion(): string {
+  // Walk up from this file's location to find package.json. tsx dev
+  // mode and tsup-built mode have different layouts; check both.
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "package.json"),
+    resolvePath(here, "..", "..", "package.json"),
+    resolvePath(here, "package.json"),
+  ]) {
+    if (existsSync(candidate)) {
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { version?: string };
+        if (typeof pkg.version === "string" && pkg.version.length > 0) {
+          return pkg.version;
+        }
+      } catch {
+        // fall through
+      }
+    }
+  }
+  return "latest";
+}
+
+/**
+ * Path to the bundled schema/v1.json inside the package. Looked up
+ * relative to this file's location so it works in both dev (src/) and
+ * built (dist/) layouts.
+ */
+export function findSchemaSource(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "schema", "v1.json"),
+    resolvePath(here, "schema", "v1.json"),
+    resolvePath(here, "..", "..", "schema", "v1.json"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Interactive prompt asking the user which install mode they want.
+ * Used only when stdin is a TTY; non-TTY callers fall back to
+ * `detectDefaultInstallMode`.
+ */
+async function promptInstallMode(defaultChoice: InstallChoice): Promise<InstallChoice> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise<InstallChoice>((resolve) => {
+      const prompt =
+        `Where should skilled-pr be installed?\n` +
+        `  1. Local devDependency  (recommended for Node projects)\n` +
+        `  2. Global               (skilled-pr available everywhere)\n` +
+        `  3. Skip                 (manage the install yourself)\n` +
+        `[default: ${defaultChoice}] > `;
+      rl.question(prompt, (answer) => {
+        const trimmed = answer.trim().toLowerCase();
+        if (trimmed === "" || trimmed === "y" || trimmed === "yes") {
+          resolve(defaultChoice);
+        } else if (trimmed === "1" || trimmed === "local") {
+          resolve("local");
+        } else if (trimmed === "2" || trimmed === "global") {
+          resolve("global");
+        } else if (trimmed === "3" || trimmed === "skip") {
+          resolve("skip");
+        } else {
+          // Unrecognised → fall back to the default rather than erroring;
+          // re-running init is cheap.
+          resolve(defaultChoice);
+        }
+      });
+    });
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Run the install command for the given (pm, choice, version). Streams
+ * output to the user's terminal so they see install progress. Returns
+ * true on success, false on failure (does NOT throw — install failure
+ * shouldn't block writing the config files).
+ */
+function runInstall(pm: PackageManager, choice: "local" | "global", version: string): boolean {
+  const argv = buildInstallArgv(pm, choice, version);
+  if (argv === null) return true; // nothing to do
+  console.log(`\n  Running: ${argv.join(" ")}\n`);
+  const proc = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+  if (proc.status !== 0) {
+    console.warn(
+      `⚠ Install command exited with code ${proc.status}. Continuing with config setup.\n` +
+        `  If skilled-pr isn't on PATH after this, run the install manually:\n` +
+        `    ${argv.join(" ")}\n`,
+    );
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Entry
+// ---------------------------------------------------------------------------
+
+function isTTY(): boolean {
+  // Node sets isTTY on the stream when stdin is attached to a
+  // terminal. CI / piped input gives `undefined` (falsy). Tests can
+  // bypass via --install-mode.
+  try {
+    const fdStat = statSync(0);
+    return process.stdin.isTTY === true && fdStat.isCharacterDevice();
+  } catch {
+    return process.stdin.isTTY === true;
+  }
+}
+
 export async function init(argv: string[] = []) {
   console.log("Skilled PR: setting up...\n");
 
-  // 1. Parse args (currently only --for).
+  // 1. Parse args.
   const args = parseInitArgs(argv);
   if (!args.ok) {
     console.error(`skilled-pr init: ${args.error}`);
     process.exit(1);
   }
 
-  // 2. Pick harness adapters: explicit override > detection > Claude fallback.
+  // 2. Resolve harness selection.
   let harnesses: Harness[];
   if (args.forHarness) {
     const resolved = resolveHarnessOverride(args.forHarness);
@@ -167,19 +296,65 @@ export async function init(argv: string[] = []) {
     harnesses = detectHarnesses();
   }
 
-  // 3. Create .skilledpr.jsonc if missing.
-  if (existsSync(".skilledpr.jsonc")) {
-    console.log("✓ .skilledpr.jsonc already exists");
+  // 3. Resolve install mode (flag > prompt > auto-detect default).
+  const explicit = parseInstallChoice(args.installMode);
+  if (args.installMode !== undefined && explicit === null) {
+    console.error(
+      `skilled-pr init: --install-mode must be "local", "global", or "skip" (got "${args.installMode}")`,
+    );
+    process.exit(1);
+  }
+  const autoDefault = detectDefaultInstallMode();
+  let installChoice: InstallChoice;
+  if (explicit !== null) {
+    installChoice = explicit;
+  } else if (isTTY()) {
+    installChoice = await promptInstallMode(autoDefault);
   } else {
-    writeFileWithMkdir(".skilledpr.jsonc", generateDefaultConfig());
-    console.log("✓ Created .skilledpr.jsonc");
+    installChoice = autoDefault;
+    console.log(
+      `  (non-interactive; defaulting to install mode "${installChoice}". Use --install-mode to override.)`,
+    );
   }
 
-  // 4. Keep local review artifacts out of PR diffs.
+  // 4. Run install (or skip).
+  if (installChoice === "skip") {
+    console.log("✓ Install skipped (--install-mode=skip)");
+  } else {
+    const pm = detectPackageManager();
+    const version = readOwnVersion();
+    runInstall(pm, installChoice, version);
+  }
+
+  // 5. Create .skilledpr/config.jsonc if missing.
+  if (existsSync(CONFIG_PATH)) {
+    console.log(`✓ ${CONFIG_PATH} already exists`);
+  } else {
+    writeFileWithMkdir(CONFIG_PATH, generateDefaultConfig());
+    console.log(`✓ Created ${CONFIG_PATH}`);
+  }
+
+  // 6. Write the bundled schema next to it so editors get autocompletion.
+  const schemaSource = findSchemaSource();
+  if (schemaSource !== null) {
+    const schemaContent = readFileSync(schemaSource, "utf8");
+    const existing = existsSync(SCHEMA_PATH) ? readFileSync(SCHEMA_PATH, "utf8") : null;
+    if (existing === schemaContent) {
+      console.log(`✓ ${SCHEMA_PATH} already up to date`);
+    } else {
+      writeFileWithMkdir(SCHEMA_PATH, schemaContent);
+      console.log(`✓ ${existing === null ? "Created" : "Updated"} ${SCHEMA_PATH}`);
+    }
+  } else {
+    console.warn(
+      `⚠ Could not locate bundled schema/v1.json — ${SCHEMA_PATH} not written. Editor autocompletion won't work.`,
+    );
+  }
+
+  // 7. Keep local review artifacts out of PR diffs.
   ensureGitignoreEntry(".review/");
 
-  // 5. Install hooks for each selected harness. A corrupt settings file is
-  //    skipped, not merged into, but healthy harnesses still get wired up.
+  // 8. Install hooks for each selected harness.
   const installErrors: Array<{ harness: Harness; error: Error }> = [];
   for (const harness of harnesses) {
     try {
@@ -199,29 +374,29 @@ export async function init(argv: string[] = []) {
     process.exit(1);
   }
 
-  // 6. Next steps. The "your harness here" wording adapts to what we wired up.
+  // 9. Next steps.
   const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:
 
-  1. Make sure \`skilled-pr\` is on your PATH (the hooks invoke it as
-     \`skilled-pr hook\`). Install globally with \`npm i -g skilled-pr\`
-     (or \`pnpm add -g skilled-pr\`) or pin a per-project install and
-     adjust the hook command.
+  1. Review \`${CONFIG_PATH}\`. List which review skills must run
+     before merge under \`requiredSkills\`. Tune \`summaryPrompt\` and
+     \`briefingPrompt\` (set to null to use built-in defaults). Add
+     per-context \`rules\` if you want stricter gates on release
+     branches, label-gated skills, or author-based bypasses.
 
-  2. Review \`.skilledpr.jsonc\`. List which review skills must run
-     before merge under \`requiredSkills\`, and tune the \`summaryPrompt\`
-     to whatever shape you want each skill's PR comment to take.
-
-  3. Enable branch protection on GitHub:
+  2. Enable branch protection on GitHub:
      -> Repo Settings -> Branches -> Branch protection rules
      -> Add rule for your main branch
      -> Check "Require status checks to pass"
      -> Search for "Skilled PR" and add it.
 
-  4. Invoke a required review skill in ${harnessList}. Skilled PR will
+  3. Invoke a required review skill in ${harnessList}. Skilled PR will
      automatically inject attestation instructions, and the model will
      write findings + post the GitHub status.
+
+Tip: \`skilled-pr show\` prints the active config and resolved profile
+for the current branch; \`skilled-pr doctor\` diagnoses common issues.
 
 Done!
 `);

@@ -9,11 +9,19 @@
 // Output convention: ✓ pass / ⚠ warn / ✗ fail / · skip. Every failure or
 // warning includes a one-line `fix` instruction the user can copy-paste.
 
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { run } from "./proc";
 import { parseGitHubRemote, type GitHubRemote } from "./github";
-import { parseConfig } from "./config";
+import {
+  CONFIG_PATH,
+  CURRENT_SCHEMA_VERSION,
+  LEGACY_CONFIG_PATH,
+  parseConfig,
+  type Rule,
+  type SkilledPRConfig,
+} from "./config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,12 +210,28 @@ const WHY_CONFIG =
   "Lists which review skills must run before merge (requiredSkills). Without it, the hook has no idea which skill invocations to attest, and the entire plug-and-play loop is silent.";
 
 /**
- * Classify the presence + validity of .skilledpr.jsonc.
+ * Classify the presence + validity of `.skilledpr/config.jsonc`. Also
+ * detects the legacy `.skilledpr.jsonc` at root and routes the user
+ * toward migration. Takes a third argument indicating whether the
+ * legacy file exists (so doctor's I/O wrapper can probe both paths and
+ * keep this classifier pure).
  */
-export function classifySkilledPRConfig(rawContent: string | null): CheckResult {
+export function classifySkilledPRConfig(
+  rawContent: string | null,
+  legacyExists: boolean = false,
+): CheckResult {
+  if (legacyExists) {
+    return {
+      name: CONFIG_PATH,
+      status: "fail",
+      detail: `legacy ${LEGACY_CONFIG_PATH} detected at repo root`,
+      fix: `Move ${LEGACY_CONFIG_PATH} to ${CONFIG_PATH} and add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\` (PR #2 will ship an automated migrator). Or run \`skilled-pr init\` to regenerate.`,
+      why: WHY_CONFIG,
+    };
+  }
   if (rawContent === null) {
     return {
-      name: ".skilledpr.jsonc",
+      name: CONFIG_PATH,
       status: "fail",
       detail: "not found",
       fix: "skilled-pr init",
@@ -218,28 +242,262 @@ export function classifySkilledPRConfig(rawContent: string | null): CheckResult 
     const config = parseConfig(rawContent);
     if (config.requiredSkills.length === 0) {
       return {
-        name: ".skilledpr.jsonc",
+        name: CONFIG_PATH,
         status: "warn",
         detail: "requiredSkills is empty — hook will never inject reminders",
-        fix: "Add at least one skill to requiredSkills in .skilledpr.jsonc",
+        fix: `Add at least one skill to requiredSkills in ${CONFIG_PATH}`,
         why: WHY_CONFIG,
       };
     }
     return {
-      name: ".skilledpr.jsonc",
+      name: CONFIG_PATH,
       status: "pass",
       detail: `requiredSkills: ${JSON.stringify(config.requiredSkills)}`,
       why: WHY_CONFIG,
     };
   } catch (e) {
     return {
-      name: ".skilledpr.jsonc",
+      name: CONFIG_PATH,
       status: "fail",
       detail: `parse error: ${(e as Error).message}`,
       fix: "Fix the syntax error or run `skilled-pr init` to regenerate",
       why: WHY_CONFIG,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// v1 additions: schemaVersion drift, bundled schema freshness, rules,
+// referenced skills.
+// ---------------------------------------------------------------------------
+
+const WHY_SCHEMA_VERSION =
+  "skilled-pr's config schema is versioned. If your config is newer than the CLI, you'll get parse errors at runtime; if it's older, you'll miss new fields that PR #2's migrator can add automatically. doctor catches drift in both directions.";
+
+/**
+ * Compare the loaded config's schemaVersion against the CLI's known
+ * CURRENT_SCHEMA_VERSION. Bumps to a newer version (config > CLI)
+ * fail; older versions warn (the parser may still accept it today,
+ * but the user should migrate via `skilled-pr` to pick up new
+ * defaults).
+ */
+export function classifySchemaVersion(config: SkilledPRConfig | null): CheckResult {
+  if (config === null) {
+    return { name: "schemaVersion", status: "skip", detail: "skipped — no config to check" };
+  }
+  if (config.schemaVersion === CURRENT_SCHEMA_VERSION) {
+    return {
+      name: "schemaVersion",
+      status: "pass",
+      detail: `v${config.schemaVersion} matches CLI`,
+      why: WHY_SCHEMA_VERSION,
+    };
+  }
+  if (config.schemaVersion > CURRENT_SCHEMA_VERSION) {
+    return {
+      name: "schemaVersion",
+      status: "fail",
+      detail: `config is v${config.schemaVersion} but CLI only supports v${CURRENT_SCHEMA_VERSION}`,
+      fix: "Upgrade skilled-pr to a version that knows this schema",
+      why: WHY_SCHEMA_VERSION,
+    };
+  }
+  return {
+    name: "schemaVersion",
+    status: "warn",
+    detail: `config is v${config.schemaVersion}, CLI is v${CURRENT_SCHEMA_VERSION}`,
+    fix: "Run `/skilled-pr-update` (PR #2 will ship this skill) or `skilled-pr init` to regenerate.",
+    why: WHY_SCHEMA_VERSION,
+  };
+}
+
+const WHY_BUNDLED_SCHEMA =
+  "The .skilledpr/schema.json in your repo provides editor autocompletion for .skilledpr/config.jsonc. If it drifts from the schema bundled with the installed CLI, hover hints and field validation in your editor will be out of date.";
+
+/**
+ * Compare the in-repo `.skilledpr/schema.json` against the schema
+ * bundled with the installed CLI by SHA-256 hash. Pure: both inputs
+ * are content strings.
+ */
+export function classifyBundledSchema(
+  repoSchemaContent: string | null,
+  packageSchemaContent: string | null,
+): CheckResult {
+  if (repoSchemaContent === null) {
+    return {
+      name: "bundled schema",
+      status: "warn",
+      detail: ".skilledpr/schema.json not found in repo",
+      fix: "skilled-pr init  (idempotent; writes the schema)",
+      why: WHY_BUNDLED_SCHEMA,
+    };
+  }
+  if (packageSchemaContent === null) {
+    return {
+      name: "bundled schema",
+      status: "warn",
+      detail: "could not locate the CLI's bundled schema to compare against",
+      fix: "Try reinstalling skilled-pr; the bundled schema/v1.json should ship with the package.",
+      why: WHY_BUNDLED_SCHEMA,
+    };
+  }
+  const repoHash = createHash("sha256").update(repoSchemaContent).digest("hex");
+  const pkgHash = createHash("sha256").update(packageSchemaContent).digest("hex");
+  if (repoHash === pkgHash) {
+    return {
+      name: "bundled schema",
+      status: "pass",
+      detail: "in-repo schema matches CLI bundle",
+      why: WHY_BUNDLED_SCHEMA,
+    };
+  }
+  return {
+    name: "bundled schema",
+    status: "warn",
+    detail: "repo schema differs from CLI bundle (drift)",
+    fix: "Re-run `skilled-pr init` to refresh .skilledpr/schema.json.",
+    why: WHY_BUNDLED_SCHEMA,
+  };
+}
+
+const WHY_RULES =
+  "Each rule's branch glob must compile cleanly; author/labels must be the right shape. doctor catches malformed rules at setup time so the hook doesn't fail silently on every event in production.";
+
+/**
+ * Validate every rule's branch pattern (must compile as a regex after
+ * glob -> regex translation) plus its author + labels shape. Returns
+ * a single check covering all rules.
+ */
+export function classifyRulePatterns(rules: Rule[]): CheckResult {
+  if (rules.length === 0) {
+    return {
+      name: "rule patterns",
+      status: "pass",
+      detail: "no rules configured",
+      why: WHY_RULES,
+    };
+  }
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    for (let j = 0; j < rule.match.length; j++) {
+      const block = rule.match[j];
+      if (block.branch !== undefined) {
+        try {
+          // Glob -> regex via the same translation resolve.ts uses,
+          // inlined here to avoid a cycle (doctor doesn't depend on
+          // resolve; resolve doesn't depend on doctor).
+          const escaped = block.branch
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*");
+          new RegExp(`^${escaped}$`);
+        } catch (e) {
+          return {
+            name: "rule patterns",
+            status: "fail",
+            detail: `rules[${i}].match[${j}].branch is not a valid pattern: ${(e as Error).message}`,
+            fix: "Fix the pattern in .skilledpr/config.jsonc; supported syntax is plain strings with `*` wildcards.",
+            why: WHY_RULES,
+          };
+        }
+      }
+      if (block.author !== undefined && block.author.trim().length === 0) {
+        return {
+          name: "rule patterns",
+          status: "fail",
+          detail: `rules[${i}].match[${j}].author is empty`,
+          fix: "Remove the author key or set it to an actual login.",
+          why: WHY_RULES,
+        };
+      }
+      if (block.labels !== undefined) {
+        // Trim + dedupe check; warn on empty entries but don't fail.
+        const empty = block.labels.findIndex((l) => l.trim().length === 0);
+        if (empty !== -1) {
+          return {
+            name: "rule patterns",
+            status: "fail",
+            detail: `rules[${i}].match[${j}].labels[${empty}] is empty`,
+            fix: "Remove empty entries from the labels array.",
+            why: WHY_RULES,
+          };
+        }
+      }
+    }
+  }
+  return {
+    name: "rule patterns",
+    status: "pass",
+    detail: `${rules.length} rule(s) compile cleanly`,
+    why: WHY_RULES,
+  };
+}
+
+const WHY_REFERENCED_SKILLS =
+  "Skill names in requiredSkills / rules.requiredSkills should correspond to actual skill directories the harness can find. A typo (e.g. `gstack:reviw`) means the hook never matches and the gate silently doesn't enforce that review.";
+
+/**
+ * Warn (not fail) when a skill name in requiredSkills isn't found as a
+ * subdirectory in either the Claude skills dir or the Codex skills
+ * dir. Receiving lists of directory contents (not paths) keeps the
+ * classifier pure.
+ */
+export function classifyReferencedSkills(
+  rules: Rule[],
+  requiredSkills: string[],
+  claudeSkillNames: string[] | null,
+  codexSkillNames: string[] | null,
+): CheckResult {
+  // Build the full set of referenced skill names.
+  const referenced = new Set<string>(requiredSkills);
+  for (const rule of rules) {
+    if (rule.requiredSkills) {
+      for (const s of rule.requiredSkills) referenced.add(s);
+    }
+  }
+  if (referenced.size === 0) {
+    return {
+      name: "referenced skills",
+      status: "skip",
+      detail: "no skills to check (requiredSkills empty in config + all rules)",
+    };
+  }
+  if (claudeSkillNames === null && codexSkillNames === null) {
+    return {
+      name: "referenced skills",
+      status: "skip",
+      detail: "skipped — no .claude/skills or .codex/skills directory found",
+    };
+  }
+  // For each referenced skill, check whether it exists under EITHER
+  // harness's skills dir. The first segment before `:` is the
+  // namespace; we match against the bare name too because skills can
+  // be installed without a namespace prefix.
+  const known = new Set<string>([
+    ...(claudeSkillNames ?? []),
+    ...(codexSkillNames ?? []),
+  ]);
+  const missing: string[] = [];
+  for (const name of referenced) {
+    const bare = name.includes(":") ? name.split(":").pop()! : name;
+    if (!known.has(name) && !known.has(bare)) {
+      missing.push(name);
+    }
+  }
+  if (missing.length === 0) {
+    return {
+      name: "referenced skills",
+      status: "pass",
+      detail: `${referenced.size} skill(s) all resolve to a skills directory`,
+      why: WHY_REFERENCED_SKILLS,
+    };
+  }
+  return {
+    name: "referenced skills",
+    status: "warn",
+    detail: `skills not found in any harness: ${missing.join(", ")}`,
+    fix: "Check for typos; install the missing skill(s); or remove from requiredSkills.",
+    why: WHY_REFERENCED_SKILLS,
+  };
 }
 
 const WHY_HOOKS =
@@ -616,6 +874,55 @@ async function readFileOrNull(path: string): Promise<string | null> {
   return readFileSync(path, "utf8");
 }
 
+/**
+ * List subdirectory names under `path`, or null if the directory
+ * itself doesn't exist. Used to enumerate installed skills under
+ * `.claude/skills/` and `.codex/skills/`.
+ */
+function listSubdirsOrNull(path: string): string[] | null {
+  if (!existsSync(path)) return null;
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Locate the CLI's own bundled `schema/v1.json` so doctor can compare
+ * it against the in-repo `.skilledpr/schema.json`. Returns the file's
+ * content as a string, or null if it can't be located.
+ */
+async function readBundledSchema(): Promise<string | null> {
+  // tsx dev mode vs tsup-built mode: the file's location relative to
+  // process.argv[1] differs. We probe a couple of conventional
+  // candidates and use the first that exists.
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, resolve: resolvePath } = await import("node:path");
+  let here: string;
+  try {
+    here = dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return null;
+  }
+  for (const candidate of [
+    resolvePath(here, "..", "schema", "v1.json"),
+    resolvePath(here, "schema", "v1.json"),
+    resolvePath(here, "..", "..", "schema", "v1.json"),
+  ]) {
+    if (existsSync(candidate)) {
+      try {
+        return readFileSync(candidate, "utf8");
+      } catch {
+        // fall through
+      }
+    }
+  }
+  return null;
+}
+
 export async function doctor(args: string[] = []) {
   // --why / --verbose / -v all enable the educational "Why this matters"
   // line under each check. Without any of them, the output stays compact
@@ -649,10 +956,61 @@ export async function doctor(args: string[] = []) {
   const remoteResultCheck = classifyGitHubRemote(remoteResult.stdout);
   results.push(remoteResultCheck);
 
-  // 5. .skilledpr.jsonc
-  const config = await readFileOrNull(".skilledpr.jsonc");
-  const configCheck = classifySkilledPRConfig(config);
+  // 5. .skilledpr/config.jsonc
+  const config = await readFileOrNull(CONFIG_PATH);
+  const legacyExists = existsSync(LEGACY_CONFIG_PATH);
+  const configCheck = classifySkilledPRConfig(config, legacyExists);
   results.push(configCheck);
+
+  // 5b. v1 schema-related checks. parsedConfig is null when the config
+  //     failed to parse or doesn't exist; the schemaVersion check
+  //     skips in that case.
+  let parsedConfig: SkilledPRConfig | null = null;
+  if (config !== null && !legacyExists) {
+    try {
+      parsedConfig = parseConfig(config);
+    } catch {
+      // parseConfig failures are surfaced by classifySkilledPRConfig
+      // above; here we just skip the dependent checks.
+    }
+  }
+  results.push(classifySchemaVersion(parsedConfig));
+
+  // 5c. Bundled schema freshness (repo vs CLI bundle).
+  const repoSchema = await readFileOrNull(".skilledpr/schema.json");
+  const bundledSchema = await readBundledSchema();
+  results.push(classifyBundledSchema(repoSchema, bundledSchema));
+
+  // 5d. Rule pattern validity.
+  if (parsedConfig !== null) {
+    results.push(classifyRulePatterns(parsedConfig.rules));
+  } else {
+    results.push({
+      name: "rule patterns",
+      status: "skip",
+      detail: "skipped — config did not parse",
+    });
+  }
+
+  // 5e. Referenced skills exist somewhere.
+  if (parsedConfig !== null) {
+    const claudeSkillNames = listSubdirsOrNull(".claude/skills");
+    const codexSkillNames = listSubdirsOrNull(".codex/skills");
+    results.push(
+      classifyReferencedSkills(
+        parsedConfig.rules,
+        parsedConfig.requiredSkills,
+        claudeSkillNames,
+        codexSkillNames,
+      ),
+    );
+  } else {
+    results.push({
+      name: "referenced skills",
+      status: "skip",
+      detail: "skipped — config did not parse",
+    });
+  }
 
   // 6. Harness hooks: Claude Code, Codex, or both.
   //    Policy: always emit one line per harness's hook config, even when
@@ -727,10 +1085,7 @@ export async function doctor(args: string[] = []) {
       ".defaultBranchRef.name",
     ]).stdout?.trim() ?? "main";
 
-    const statusName =
-      configCheck.status === "pass" && config !== null
-        ? parseConfig(config).statusName
-        : "Skilled PR";
+    const statusName = parsedConfig?.statusName ?? "Skilled PR";
 
     const protectionResult = tryRun([
       "gh",

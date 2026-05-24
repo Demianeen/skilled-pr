@@ -1,0 +1,29 @@
+{
+  // Realistic config with three rules — the upper-bound shape we expect
+  // typical projects to hit. Used by the bench to measure hook latency
+  // with non-trivial rule resolution work.
+  "schemaVersion": 1,
+  "requiredSkills": ["review"],
+  "statusName": "Skilled PR",
+  "failOn": "error",
+  "summaryPrompt": null,
+  "briefingPrompt": null,
+  "rules": [
+    {
+      "name": "release branches require stricter review",
+      "match": [{ "branch": "release-*" }],
+      "failOn": "warning",
+      "requiredSkills": ["review", "gstack:cso"]
+    },
+    {
+      "name": "dependabot bypass",
+      "match": [{ "author": "dependabot[bot]" }],
+      "requiredSkills": []
+    },
+    {
+      "name": "security-labeled PRs add cso",
+      "match": [{ "labels": ["security"] }],
+      "requiredSkills": ["review", "gstack:cso"]
+    }
+  ]
+}

@@ -23,7 +23,6 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -263,12 +262,7 @@ function isTTY(): boolean {
   // Node sets isTTY on the stream when stdin is attached to a
   // terminal. CI / piped input gives `undefined` (falsy). Tests can
   // bypass via --install-mode.
-  try {
-    const fdStat = statSync(0);
-    return process.stdin.isTTY === true && fdStat.isCharacterDevice();
-  } catch {
-    return process.stdin.isTTY === true;
-  }
+  return process.stdin.isTTY === true;
 }
 
 export async function init(argv: string[] = []) {

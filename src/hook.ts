@@ -125,7 +125,14 @@ export function readStdin(
 interface HookEvent {
   hook_event_name?: string;
   tool_name?: string;
-  tool_input?: { skill?: string };
+  /**
+   * Union of the tool-specific inputs we care about:
+   *   - PostToolUse:Skill   →  { skill: string }
+   *   - PostToolUse:Bash    →  { command: string } (used by the on-push
+   *     trigger in src/hook-bash.ts)
+   * Other tool types still fire PostToolUse but we ignore their inputs.
+   */
+  tool_input?: { skill?: string; command?: string };
   command_name?: string;
   /** Codex UserPromptSubmit. The full text the user just submitted. */
   prompt?: string;
@@ -253,6 +260,26 @@ export async function hook() {
     event = JSON.parse(stdin) as HookEvent;
   } catch (e) {
     console.error(`skilled-pr hook: malformed stdin (${(e as Error).message})`);
+    return;
+  }
+
+  // PostToolUse:Bash branch: fires the autoReview.trigger=on-push reminder
+  // when the agent just ran `git push`. `maybeOnPushReminder` does its own
+  // config load + early-bail on the bash command not being a push, so the
+  // hot path stays cheap on the common case (every Bash invocation).
+  if (event.hook_event_name === "PostToolUse" && event.tool_name === "Bash") {
+    const { maybeOnPushReminder } = await import("./hook-bash");
+    const reminder = await maybeOnPushReminder(event);
+    if (reminder !== null) {
+      console.log(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PostToolUse",
+            additionalContext: reminder,
+          },
+        }),
+      );
+    }
     return;
   }
 

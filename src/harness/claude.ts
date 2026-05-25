@@ -43,6 +43,24 @@ export function mergeSkilledPRHooks(existing: ClaudeSettings | null): ClaudeSett
   return { ...(existing ?? {}), hooks };
 }
 
+/**
+ * Merge the `PostToolUse:Bash` hook entry that backs
+ * `autoReview.trigger=on-push`. Idempotent. Called by init when
+ * `autoReview.trigger` is `on-push` AND the Claude harness is in
+ * scope — Codex has no PostToolUse:Bash equivalent so the on-push
+ * trigger is Claude-only for now.
+ *
+ * Splitting this from `mergeSkilledPRHooks` keeps the default install
+ * (which doesn't know about autoReview yet) minimal; users on
+ * trigger=manual don't get a PostToolUse:Bash hook firing on every
+ * bash invocation when they don't need it.
+ */
+export function mergeOnPushBashHook(existing: ClaudeSettings | null): ClaudeSettings {
+  const hooks: NonNullable<ClaudeSettings["hooks"]> = { ...(existing?.hooks ?? {}) };
+  ensureSkilledPRHook(hooks, "PostToolUse", "Bash");
+  return { ...(existing ?? {}), hooks };
+}
+
 function ensureSkilledPRHook(
   hooks: NonNullable<ClaudeSettings["hooks"]>,
   event: string,

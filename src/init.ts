@@ -38,7 +38,7 @@ import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc
 import { parseInitArgs } from "./args";
 import { CONFIG_PATH, generateDefaultConfig } from "./config";
 import type { Harness } from "./harness";
-import { detectHarnesses, resolveHarnessOverride } from "./harness";
+import { detectHarnesses, mergeOnPushBashHook, resolveHarnessOverride } from "./harness";
 import { buildInstallArgv, detectPackageManager, type PackageManager } from "./pm-detect";
 
 // Re-export legacy types so existing imports (tests, doctor.ts) keep working.
@@ -252,6 +252,62 @@ function installUpdateSkillForHarness(harness: Harness, templateContent: string)
 }
 
 /**
+ * Conditionally install the PostToolUse:Bash hook that backs
+ * `autoReview.trigger=on-push`. Loads the config to read the setting;
+ * silently no-ops when:
+ *   - config doesn't exist yet (fresh install, no .skilledpr/config.jsonc)
+ *   - autoReview.trigger isn't on-push
+ *   - Claude isn't in the harness scope (Codex-only repo)
+ *
+ * Idempotent — `mergeOnPushBashHook` checks for an existing
+ * `skilled-pr hook` command before inserting a duplicate.
+ */
+async function maybeInstallOnPushBashHook(harnesses: ReadonlyArray<Harness>): Promise<void> {
+  const claudeHarness = harnesses.find((h) => h.name === "claude");
+  if (!claudeHarness) return;
+  // Read config; bail silently if missing or unparseable. The user may
+  // be running `skilled-pr init` for the first time; the bash hook gets
+  // installed on the next `init` once they've enabled on-push in config.
+  let trigger: "manual" | "on-push";
+  try {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig();
+    if (!config) return;
+    trigger = config.autoReview.trigger;
+  } catch {
+    return;
+  }
+  if (trigger !== "on-push") return;
+
+  // Existing settings → merge → write (only if changed).
+  let existing: unknown = null;
+  if (existsSync(claudeHarness.settingsPath)) {
+    const raw = readFileSync(claudeHarness.settingsPath, "utf8");
+    const errors: ParseError[] = [];
+    existing = parseJsonc(raw, errors, { allowTrailingComma: true });
+    if (errors.length > 0) {
+      // Tolerate parse errors here — installForHarness already surfaced
+      // them earlier in init's run.
+      return;
+    }
+  }
+  const merged = mergeOnPushBashHook(existing as ClaudeSettings | null);
+  const before = existing === null ? null : JSON.stringify(existing);
+  const after = JSON.stringify(merged);
+  if (before === after) {
+    console.log(`✓ ${claudeHarness.settingsPath} already has PostToolUse:Bash hook (Claude Code)`);
+    return;
+  }
+  writeFileWithMkdir(claudeHarness.settingsPath, JSON.stringify(merged, null, 2) + "\n");
+  console.log(`✓ Updated ${claudeHarness.settingsPath} with PostToolUse:Bash hook for on-push trigger (Claude Code)`);
+}
+
+// Re-export the type used in the helper above so we don't depend on
+// importing directly from the harness module path inside init.ts
+// callers — keeps the file's import block self-contained.
+import type { ClaudeSettings } from "./harness";
+
+/**
  * Interactive prompt asking the user which install mode they want.
  * Used only when stdin is a TTY; non-TTY callers fall back to
  * `detectDefaultInstallMode`.
@@ -440,7 +496,13 @@ export async function init(argv: string[] = []) {
     );
   }
 
-  // 9. Next steps.
+  // 10. Install the PostToolUse:Bash hook for autoReview.trigger=on-push.
+  //     Claude-only (Codex has no PostToolUse:Bash equivalent). Skipped if
+  //     the config can't be loaded yet (fresh install) or if trigger
+  //     isn't on-push. Idempotent — safe to re-run.
+  await maybeInstallOnPushBashHook(harnesses);
+
+  // 11. Next steps.
   const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:

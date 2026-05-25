@@ -5,7 +5,7 @@
 // internals without churning import sites.
 
 export type { Harness, HarnessName } from "./types";
-export { claudeHarness, mergeSkilledPRHooks } from "./claude";
+export { claudeHarness, mergeSkilledPRHooks, mergeOnPushBashHook } from "./claude";
 export type { ClaudeSettings } from "./claude";
 export { codexHarness, mergeCodexHooks } from "./codex";
 export type { CodexSettings } from "./codex";

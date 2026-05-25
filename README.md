@@ -154,7 +154,7 @@ Want to write your own? It's ~25 lines of markdown — see [docs/SKILL_AUTHORING
 
 For each required skill, two things post:
 
-1. **A summary comment** at the PR conversation level — one per skill. The skill renders the body itself, following your `summaryPrompt` from `.skilledpr.jsonc`. A typo-check skill's summary looks nothing like a security-review skill's; one transport, many shapes. Updated in place on each re-attestation.
+1. **A summary comment** at the PR conversation level — one per skill. The skill renders the body itself, following your `summaryPrompt` from `.skilledpr/config.jsonc`. A typo-check skill's summary looks nothing like a security-review skill's; one transport, many shapes. Updated in place on each re-attestation.
 2. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
 
 Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-updated in place via an HTML marker (`<!-- skilled-pr:artifact:<skill> -->`); the status check is replaced.

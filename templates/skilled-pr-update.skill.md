@@ -49,12 +49,30 @@ Pick the right command from this table based on your detected pm + mode:
 |---|---|---|
 | pnpm | `pnpm add -D skilled-pr@latest` | `pnpm add -g skilled-pr@latest` |
 | npm | `npm install skilled-pr@latest --save-dev` | `npm install -g skilled-pr@latest` |
-| yarn | `yarn add -D skilled-pr@latest` | `yarn global add skilled-pr@latest` |
+| yarn (v1) | `yarn add -D skilled-pr@latest` | `yarn global add skilled-pr@latest` |
+| yarn (v2+) | `yarn add -D skilled-pr@latest` | (no global install — use npm/pnpm/bun) |
 | bun | `bun add -d skilled-pr@latest` | `bun add -g skilled-pr@latest` |
 
-Run it and show the output to the user.
+To detect Yarn version: read the `packageManager` field from `package.json` if present (e.g. `"yarn@3.6.4"`), or run `yarn --version`. Yarn 2+ deliberately removed `yarn global` (see https://yarnpkg.com/getting-started/migration#use-yarn-dlx-instead-of-yarn-global). If the user is on Yarn 2+ and wants a global install, fall back to npm: `npm install -g skilled-pr@latest`.
+
+Run the command and show the output to the user.
 
 ## 5. Plan the migration
+
+For LOCAL installs, invoke skilled-pr via the project-local binary so you exercise the newly-installed version (not a potentially-stale global):
+
+```
+# Local install (pnpm / npm / yarn / bun all expose node_modules/.bin):
+./node_modules/.bin/skilled-pr migrate --plan
+
+# Or with the package manager's own runner:
+pnpm exec skilled-pr migrate --plan
+npx skilled-pr migrate --plan
+yarn skilled-pr migrate --plan
+bun skilled-pr migrate --plan
+```
+
+For GLOBAL installs, the bare command works:
 
 ```
 skilled-pr migrate --plan
@@ -67,6 +85,8 @@ Read the planner's output. Three cases:
 - **Plan has a step that refuses to apply** (e.g., "config newer than CLI", parse error) → stop. Report the issue to the user and ask how they want to handle it.
 
 ## 6. Apply the migration
+
+Use the same invocation form as step 5 (local-bin path for local installs, bare command for global):
 
 ```
 skilled-pr migrate --apply
@@ -81,6 +101,8 @@ The bundled skill template can change between skilled-pr versions. If the user w
 Skip this step if the user didn't ask for a skill refresh.
 
 ## 8. Verify with doctor
+
+Same invocation form as step 5:
 
 ```
 skilled-pr doctor

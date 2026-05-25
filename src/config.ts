@@ -319,8 +319,8 @@ export function parseConfig(raw: string): SkilledPRConfig {
   if (!("schemaVersion" in parsedObj)) {
     throw new Error(
       `Invalid ${CONFIG_PATH}: "schemaVersion" is required (must be ${CURRENT_SCHEMA_VERSION}). ` +
-        `Old configs without schemaVersion need migration. PR #2 will ship an automated migrator; ` +
-        `for now, run \`skilled-pr init\` to regenerate, or add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\` manually.`,
+        `Invoke \`/skilled-pr-update\` to migrate automatically, or run \`skilled-pr init\` to regenerate, ` +
+        `or add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\` manually.`,
     );
   }
   if (parsedObj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
@@ -423,8 +423,7 @@ export async function loadConfig(path = CONFIG_PATH): Promise<SkilledPRConfig | 
   if (path === CONFIG_PATH && existsSync(LEGACY_CONFIG_PATH)) {
     throw new Error(
       `Old config detected at ${LEGACY_CONFIG_PATH}. The v1 schema lives in ${CONFIG_PATH}. ` +
-        `Move and update your config, or run \`skilled-pr init\` to regenerate. ` +
-        `(PR #2 will ship an automated migrator.)`,
+        `Invoke \`/skilled-pr-update\` to migrate automatically, or run \`skilled-pr init\` to regenerate.`,
     );
   }
   if (!existsSync(path)) return null;

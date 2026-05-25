@@ -122,14 +122,14 @@ describe("parseConfig", () => {
     expect(() => parseConfig("{}")).toThrow(/schemaVersion.*required/);
   });
 
-  test("missing schemaVersion error mentions init and PR #2's migrator", () => {
+  test("missing schemaVersion error mentions init AND the /skilled-pr-update migration path", () => {
     try {
       parseConfig("{}");
       throw new Error("expected throw");
     } catch (e) {
       const msg = (e as Error).message;
       expect(msg).toMatch(/skilled-pr init/);
-      expect(msg).toMatch(/migrator|migration/i);
+      expect(msg).toMatch(/skilled-pr-update|migrate|migration/i);
     }
   });
 

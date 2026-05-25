@@ -23,6 +23,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `schema/v1.json`) so editors with `$schema`-aware JSON support
   (VSCode, IntelliJ, nvim) get autocompletion and field validation
   out of the box.
+
+- **`skilled-pr migrate --plan` / `--apply`.** Walks a user from any
+  stale state (older config, drifted bundled `schema.json`) to what
+  the installed CLI expects. Each step is atomic + idempotent so a
+  partial run leaves the project recoverable. Foundation for future
+  schema bumps.
+
+- **`/skilled-pr-update` skill installed by `init`.** Bundled skill
+  template at `templates/skilled-pr-update.skill.md`; init copies it
+  into each detected harness's skills directory (`.claude/skills/...`
+  for Claude Code, `.codex/skills/...` for Codex). The skill walks
+  the full upgrade flow: detect package manager, run the install
+  upgrade, `migrate --plan/--apply`, then `doctor` to verify.
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields

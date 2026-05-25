@@ -178,12 +178,14 @@ skilled-pr enable-gate             Add status checks to branch protection
 skilled-pr doctor                  Diagnose your local setup
 skilled-pr show [<field>]          Inspect the active config + resolved
                                    profile for the current branch
+skilled-pr migrate --plan          Preview a schema + bundled-file
+skilled-pr migrate --apply         refresh after upgrading the CLI
 skilled-pr attest --skill <name>   Post attestation that a skill ran
                   [--findings <path>]
 skilled-pr hook                    Internal: Claude Code hook entry point
 ```
 
-Most users only ever run `init` and `enable-gate` directly. `attest` is invoked by the model automatically; `hook` is invoked by Claude Code itself. `show` is useful when you're tuning rules and want to verify what would resolve before opening a PR.
+Most users only ever run `init` and `enable-gate` directly. `attest` is invoked by the model automatically; `hook` is invoked by Claude Code itself. `show` is useful when you're tuning rules and want to verify what would resolve before opening a PR. After upgrading skilled-pr, invoke the bundled `/skilled-pr-update` skill in Claude Code or Codex — it detects your package manager, walks the upgrade, runs `migrate --plan` + `--apply`, and verifies with `doctor`.
 
 ## Status
 

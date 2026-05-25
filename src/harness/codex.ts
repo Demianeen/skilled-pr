@@ -62,6 +62,8 @@ export const codexHarness: Harness = {
   name: "codex",
   label: "Codex",
   settingsPath: ".codex/hooks.json",
+  skillsDir: ".codex/skills",
+  skillFileName: "SKILL.md",
   mergeHooks(existing: unknown): unknown {
     return mergeCodexHooks((existing as CodexSettings | null) ?? null);
   },

@@ -27,9 +27,12 @@
 // up where it left off.
 
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { CONFIG_PATH, CURRENT_SCHEMA_VERSION, loadConfig } from "./config";
-import { findSchemaSource, writeFileWithMkdir } from "./init";
+import { findSchemaSource, writeFileWithMkdir, findBypassWorkflowSource } from "./init";
+import { BYPASS_WORKFLOW_PATH, renderBypassWorkflow, writeBypassWorkflow } from "./branch-protection";
 
 const BUNDLED_SCHEMA_PATH = ".skilledpr/schema.json";
 
@@ -231,11 +234,71 @@ export async function planMigration(): Promise<MigrationPlan> {
   // already warns about that case ("can't locate bundled schema"); no need
   // to add a duplicate plan item.
 
+  // --- 3. bypass workflow freshness check
+  //
+  // If `.github/workflows/skilled-pr-bypass.yml` exists, its version pin
+  // (rendered at enable-gate time) can drift when the user upgrades the
+  // CLI. Re-render the bundled template with the current CLI version and
+  // compare. Only fires when the file already exists — users who didn't
+  // run `enable-gate` (or who manually deleted the workflow) don't get a
+  // "missing workflow" nag, which would be wrong for opted-out users.
+  const bypassWorkflowSource = findBypassWorkflowSource();
+  if (bypassWorkflowSource !== null && existsSync(BYPASS_WORKFLOW_PATH)) {
+    const ownVersion = readOwnVersionForPlanner();
+    const template = readFileSync(bypassWorkflowSource, "utf8");
+    const expected = renderBypassWorkflow(template, ownVersion);
+    const actual = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    if (actual !== expected) {
+      steps.push({
+        id: "bypass-workflow-stale",
+        title: `${BYPASS_WORKFLOW_PATH} pin or content differs from CLI v${ownVersion}`,
+        detail:
+          "Re-renders the bundled template with the current CLI version. " +
+          "Equivalent to re-running `skilled-pr enable-gate`.",
+        apply() {
+          const result = writeBypassWorkflow();
+          if (result === "missing-template") {
+            throw new Error(
+              "Bundled workflow template missing — cannot refresh. Reinstall skilled-pr.",
+            );
+          }
+          return `✓ Refreshed ${BYPASS_WORKFLOW_PATH}`;
+        },
+      });
+    }
+  }
+
   return {
     currentSchemaVersion: configSchemaVersion,
     cliSchemaVersion: CURRENT_SCHEMA_VERSION,
     steps,
   };
+}
+
+/**
+ * Read the package's own version for planner version-pin comparison.
+ * Duplicates `readOwnVersion` in branch-protection.ts intentionally to
+ * keep each module's version source obvious from its own code.
+ */
+function readOwnVersionForPlanner(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "package.json"),
+    resolvePath(here, "..", "..", "package.json"),
+    resolvePath(here, "package.json"),
+  ]) {
+    if (existsSync(candidate)) {
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { version?: string };
+        if (typeof pkg.version === "string" && pkg.version.length > 0) {
+          return pkg.version;
+        }
+      } catch {
+        // fall through
+      }
+    }
+  }
+  return "latest";
 }
 
 // ---------------------------------------------------------------------------

@@ -16,8 +16,13 @@
 // clobber any of that. GitHub's `POST .../required_status_checks/contexts`
 // endpoint is purpose-built for this.
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { run } from "./proc";
 import { loadConfig } from "./config";
+import { findBypassWorkflowSource, writeFileWithMkdir } from "./init";
 import {
   parseGitHubRemote,
   buildStatusContext,
@@ -25,9 +30,63 @@ import {
   type GitHubRemote,
 } from "./github";
 
+export const BYPASS_WORKFLOW_PATH = ".github/workflows/skilled-pr-bypass.yml";
+
 // ---------------------------------------------------------------------------
 // Pure helpers (testable, no I/O)
 // ---------------------------------------------------------------------------
+
+/**
+ * Read the package's own version at runtime so the workflow's version
+ * pin matches the CLI that wrote it. Falls back to "latest" if package.json
+ * can't be located (shouldn't happen in a sane install).
+ */
+function readOwnVersion(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "package.json"),
+    resolvePath(here, "..", "..", "package.json"),
+    resolvePath(here, "package.json"),
+  ]) {
+    if (existsSync(candidate)) {
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { version?: string };
+        if (typeof pkg.version === "string" && pkg.version.length > 0) {
+          return pkg.version;
+        }
+      } catch {
+        // fall through
+      }
+    }
+  }
+  return "latest";
+}
+
+/**
+ * Substitute the version placeholder in the workflow template. Exported
+ * pure for tests.
+ */
+export function renderBypassWorkflow(templateContent: string, version: string): string {
+  return templateContent.replaceAll("__SKILLED_PR_VERSION__", version);
+}
+
+/**
+ * Write the skilled-pr-bypass workflow with the CLI's current version
+ * pinned in. Idempotent: writes only if content differs. Returns the
+ * action taken so the caller can log it appropriately.
+ */
+export function writeBypassWorkflow(): "created" | "updated" | "skipped" | "missing-template" {
+  const source = findBypassWorkflowSource();
+  if (source === null) return "missing-template";
+  const template = readFileSync(source, "utf8");
+  const rendered = renderBypassWorkflow(template, readOwnVersion());
+  const existing = existsSync(BYPASS_WORKFLOW_PATH)
+    ? readFileSync(BYPASS_WORKFLOW_PATH, "utf8")
+    : null;
+  if (existing === rendered) return "skipped";
+  writeFileWithMkdir(BYPASS_WORKFLOW_PATH, rendered);
+  return existing === null ? "created" : "updated";
+}
 
 /**
  * Build the list of status-check contexts that should be required, given
@@ -228,4 +287,39 @@ export async function enableGate() {
   console.log(
     `Skilled PR: ✓ added ${missing.length} required check(s) to ${branch} (existing rules preserved).`,
   );
+
+  // 6. Write the bypass workflow file. CI runs `ci-resolve --post` on
+  //    every PR event; PRs that resolve to `requiredSkills: []` (via a
+  //    matching bypass rule) auto-succeed without anyone running a
+  //    skill. PRs that still need a review get a pending status with
+  //    a CTA description until attest replaces it. The workflow is a
+  //    pure status-poster — no AI runs in CI.
+  writeBypassWorkflowWithLog();
+}
+
+/**
+ * Convenience wrapper around `writeBypassWorkflow` that logs the result.
+ * Extracted so the migrator (in src/migrate.ts) can reuse the underlying
+ * write logic without duplicating the log messages.
+ */
+function writeBypassWorkflowWithLog(): void {
+  const result = writeBypassWorkflow();
+  switch (result) {
+    case "created":
+      console.log(`Skilled PR: ✓ wrote ${BYPASS_WORKFLOW_PATH}.`);
+      break;
+    case "updated":
+      console.log(`Skilled PR: ✓ refreshed ${BYPASS_WORKFLOW_PATH} (pinned to current version).`);
+      break;
+    case "skipped":
+      console.log(`Skilled PR: ${BYPASS_WORKFLOW_PATH} already up to date.`);
+      break;
+    case "missing-template":
+      console.warn(
+        `⚠ Could not locate templates/skilled-pr-bypass.yml in the package. ` +
+          `${BYPASS_WORKFLOW_PATH} not written. The PR gate will still work via attest, ` +
+          `but bypass rules (requiredSkills: []) won't auto-succeed on CI.`,
+      );
+      break;
+  }
 }

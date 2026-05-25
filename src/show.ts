@@ -213,6 +213,13 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
     `  ${ICON.info} briefingPrompt:  ${config.briefingPrompt === null ? "null (built-in default)" : compact(config.briefingPrompt)}`,
   );
   console.log(`  ${ICON.info} rules:           ${config.rules.length} rule(s)`);
+  console.log(
+    `  ${ICON.info} autoReview:      ` +
+      `trigger=${config.autoReview.trigger}, ` +
+      `execution=${config.autoReview.execution}, ` +
+      `sessionBriefing=${config.autoReview.sessionBriefing}, ` +
+      `skipPolicy=${config.autoReview.skipPolicy}`,
+  );
 
   printSection("Resolved profile (for this context)");
   console.log(`  ${ICON.info} branch:          ${JSON.stringify(context.branch || "(none)")}`);
@@ -227,6 +234,9 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
   );
   console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(profile.requiredSkills)}`);
   console.log(`  ${ICON.info} failOn:          ${JSON.stringify(profile.failOn)}`);
+  console.log(`  ${ICON.info} execution:       ${JSON.stringify(profile.execution)}`);
+  console.log(`  ${ICON.info} sessionBriefing: ${profile.sessionBriefing}`);
+  console.log(`  ${ICON.info} skipPolicy:      ${JSON.stringify(profile.skipPolicy)}`);
   console.log(
     `  ${ICON.info} summaryPrompt:   ${compact(profile.summaryPrompt)} ${config.summaryPrompt === null ? "(default)" : "(override)"}`,
   );

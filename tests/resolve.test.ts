@@ -446,7 +446,10 @@ describe("formatReminder — subagent execution mode", () => {
     expect(r).toContain("{{constraints}}");
     expect(r).toContain("{{decisions}}");
     expect(r).toContain("{{exclusions}}");
-    expect(r).toContain("fill each {{slot}}");
+    expect(r).toContain("fill each remaining {{slot}}");
+    // {{skill}} is substituted by the reminder builder before embedding,
+    // so the rendered text should not contain the literal placeholder.
+    expect(r).not.toContain("{{skill}}");
   });
 
   test("omits the briefing template when sessionBriefing=false", () => {

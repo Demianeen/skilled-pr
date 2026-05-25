@@ -301,14 +301,19 @@ function formatSubagentReminder(profile: ResolvedProfile, skillName: string): st
   if (profile.sessionBriefing) {
     lines.push("BRIEFING (background, not conclusions):");
     lines.push("");
-    // Render the briefing template with literal slot markers for the
-    // orchestrator to fill from this conversation's context.
-    for (const line of profile.briefingPrompt.split("\n")) {
+    // Substitute {{skill}} here — the orchestrator knows the skill name
+    // (it's the one whose hook just fired). Leaving {{skill}} in the
+    // template would invite the agent to try to fill it from chat
+    // context, which is wrong. The other slots (purpose / constraints /
+    // decisions / exclusions) MUST come from conversation context, so
+    // they stay un-substituted for the orchestrator to fill.
+    const briefingWithSkill = profile.briefingPrompt.replace(/\{\{skill\}\}/g, skillName);
+    for (const line of briefingWithSkill.split("\n")) {
       lines.push(line);
     }
     lines.push("");
     lines.push(
-      "BEFORE spawning the subagent: fill each {{slot}} above with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\".",
+      "BEFORE spawning the subagent: fill each remaining {{slot}} above (purpose / constraints / decisions / exclusions) with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\". The skill-name placeholder is already substituted.",
     );
     lines.push("");
   }

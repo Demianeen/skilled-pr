@@ -44,6 +44,11 @@ switch (command) {
     await show(process.argv.slice(3));
     break;
   }
+  case "migrate": {
+    const { migrate } = await import("./migrate");
+    await migrate(process.argv.slice(3));
+    break;
+  }
   default:
     console.log(`skilled-pr v${pkg.version} - Open review transport for AI-native development
 
@@ -71,6 +76,13 @@ Usage:
                   [--reminder]       prints type/default/source for that field.
                                      With --reminder, also prints the literal
                                      reminder body the hook would inject.
+  skilled-pr migrate [--plan]        Plan or execute a config + bundled file
+                     [--apply]       refresh after upgrading the CLI. Without
+                                     a flag (or with --plan) prints the plan
+                                     without mutating; --apply executes it.
+                                     Use the /skilled-pr-update skill to
+                                     orchestrate this end-to-end (detect pm,
+                                     upgrade, migrate, re-run doctor).
   skilled-pr hook                    Internal: harness hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review

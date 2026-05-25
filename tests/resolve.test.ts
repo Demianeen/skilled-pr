@@ -178,6 +178,9 @@ describe("resolveProfile", () => {
       failOn: "error",
       summaryPrompt: DEFAULT_SUMMARY_PROMPT,
       briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+      execution: "subagent",
+      sessionBriefing: true,
+      skipPolicy: "agent-decides",
     });
   });
 
@@ -339,12 +342,17 @@ describe("slugifySkill (re-exported helper)", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatReminder", () => {
+  // Default profile: inline (main-agent) execution. Tests for the
+  // subagent variant override `execution` explicitly below.
   const baseProfile: ResolvedProfile = {
     matchedRuleName: null,
     requiredSkills: ["review"],
     failOn: "error",
     summaryPrompt: "Render markdown.",
     briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+    execution: "main-agent",
+    sessionBriefing: true,
+    skipPolicy: "agent-decides",
   };
 
   test("includes the skill name verbatim", () => {
@@ -408,5 +416,69 @@ describe("formatReminder", () => {
 
   test("tells the model how to encode 'no findings'", () => {
     expect(formatReminder(baseProfile, "review", "claude")).toContain("[]");
+  });
+});
+
+describe("formatReminder — subagent execution mode", () => {
+  const subagentProfile: ResolvedProfile = {
+    matchedRuleName: null,
+    requiredSkills: ["review"],
+    failOn: "error",
+    summaryPrompt: "Render markdown.",
+    briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+    execution: "subagent",
+    sessionBriefing: true,
+    skipPolicy: "agent-decides",
+  };
+
+  test("instructs the orchestrator to spawn a subagent via the Agent/Task tool", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("autoReview.execution=subagent");
+    expect(r).toContain("Task / Agent tool");
+    expect(r).toContain("subagent_type: general-purpose");
+    expect(r).toContain("model: opus");
+  });
+
+  test("includes the briefing template when sessionBriefing=true", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("BRIEFING (background, not conclusions)");
+    expect(r).toContain("{{purpose}}");
+    expect(r).toContain("{{constraints}}");
+    expect(r).toContain("{{decisions}}");
+    expect(r).toContain("{{exclusions}}");
+    expect(r).toContain("fill each {{slot}}");
+  });
+
+  test("omits the briefing template when sessionBriefing=false", () => {
+    const profile = { ...subagentProfile, sessionBriefing: false };
+    const r = formatReminder(profile, "review", "claude");
+    expect(r).not.toContain("BRIEFING");
+    expect(r).not.toContain("{{purpose}}");
+  });
+
+  test("still tells the subagent to write findings + summary + run attest", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain(".review/findings-review.json");
+    expect(r).toContain(".review/summary-review.md");
+    expect(r).toContain("skilled-pr attest --skill review");
+  });
+
+  test("embeds the resolved summaryPrompt for the subagent to follow", () => {
+    const profile = {
+      ...subagentProfile,
+      summaryPrompt: "MY_DISTINCT_SUMMARY_INSTRUCTION_42",
+    };
+    const r = formatReminder(profile, "review", "claude");
+    expect(r).toContain("MY_DISTINCT_SUMMARY_INSTRUCTION_42");
+  });
+
+  test("tells the subagent to NOT push from inside the subagent on exit-code-2", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("do NOT push from inside the subagent");
+  });
+
+  test("instructs the orchestrator to trust the subagent's findings file as the record", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("trust the subagent's findings file as the record");
   });
 });

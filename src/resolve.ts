@@ -65,6 +65,15 @@ export interface ResolvedProfile {
   failOn: FailOn;
   summaryPrompt: string;
   briefingPrompt: string;
+  /**
+   * autoReview behaviour copied from config (rules don't override autoReview
+   * in v1; the trigger/execution/briefing choices are project-wide). Lifting
+   * them onto the resolved profile lets `formatReminder` pick the right
+   * reminder variant without having to also pass the full config around.
+   */
+  execution: "subagent" | "main-agent";
+  sessionBriefing: boolean;
+  skipPolicy: "agent-decides" | "always-fire";
 }
 
 /**
@@ -167,6 +176,9 @@ export function resolveProfile(config: SkilledPRConfig, context: PRContext): Res
     failOn,
     summaryPrompt,
     briefingPrompt,
+    execution: config.autoReview.execution,
+    sessionBriefing: config.autoReview.sessionBriefing,
+    skipPolicy: config.autoReview.skipPolicy,
   };
 }
 
@@ -202,6 +214,19 @@ export function formatReminder(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _harnessName: HarnessName,
 ): string {
+  if (profile.execution === "subagent") {
+    return formatSubagentReminder(profile, skillName);
+  }
+  return formatInlineReminder(profile, skillName);
+}
+
+/**
+ * The classic "do the review yourself" reminder. Tells the agent
+ * currently loading the skill to perform the review, write findings,
+ * write summary, and run attest. Used when
+ * `autoReview.execution=main-agent`.
+ */
+function formatInlineReminder(profile: ResolvedProfile, skillName: string): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
   const summaryPath = `.review/summary-${slug}.md`;
@@ -236,6 +261,82 @@ export function formatReminder(
   lines.push("");
   lines.push(
     "This posts the GitHub status check that gates the PR. Without it, the PR cannot merge.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * The subagent-spawn reminder. Tells the orchestrating agent to
+ * delegate the review to an Agent() call rather than doing it inline.
+ * The subagent does the review work + posts the attestation; the
+ * orchestrator only reads back findings + reports to the user.
+ *
+ * Used when `autoReview.execution=subagent`. When `sessionBriefing`
+ * is true, the orchestrator is also asked to fill the briefing
+ * template slots from conversation context before passing the prompt
+ * to the subagent.
+ */
+function formatSubagentReminder(profile: ResolvedProfile, skillName: string): string {
+  const slug = slugifySkill(skillName);
+  const findingsPath = `.review/findings-${slug}.json`;
+  const summaryPath = `.review/summary-${slug}.md`;
+  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath} --summary ${summaryPath}`;
+
+  const lines: string[] = [];
+  lines.push(
+    `This repo uses skilled-pr with \`autoReview.execution=subagent\`. The \`${skillName}\` skill is required for merge.`,
+  );
+  lines.push("");
+  lines.push(
+    `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using the Task / Agent tool with these parameters:`,
+  );
+  lines.push("");
+  lines.push("  subagent_type: general-purpose");
+  lines.push("  model: opus");
+  lines.push("  prompt: <see below>");
+  lines.push("");
+  lines.push("The subagent's prompt should include:");
+  lines.push("");
+  lines.push("```");
+  if (profile.sessionBriefing) {
+    lines.push("BRIEFING (background, not conclusions):");
+    lines.push("");
+    // Render the briefing template with literal slot markers for the
+    // orchestrator to fill from this conversation's context.
+    for (const line of profile.briefingPrompt.split("\n")) {
+      lines.push(line);
+    }
+    lines.push("");
+    lines.push(
+      "BEFORE spawning the subagent: fill each {{slot}} above with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\".",
+    );
+    lines.push("");
+  }
+  lines.push("REVIEW INSTRUCTIONS:");
+  lines.push("");
+  lines.push(`Load the \`${skillName}\` skill and review this branch per its instructions.`);
+  lines.push("");
+  lines.push(
+    `When done, write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
+  );
+  lines.push("");
+  lines.push(
+    `Then write a markdown summary to \`${summaryPath}\` following these instructions:`,
+  );
+  lines.push("");
+  for (const line of profile.summaryPrompt.split("\n")) {
+    lines.push(`  ${line}`);
+  }
+  lines.push("");
+  lines.push(`Finally, run: \`${attestCommand}\``);
+  lines.push("");
+  lines.push(
+    "If attest exits with code 2 (HEAD not pushed), do NOT push from inside the subagent — return to the orchestrator with a message explaining the situation.",
+  );
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "After the subagent returns, briefly confirm to the user whether the gate posted successfully. Don't re-do the review work in this conversation; trust the subagent's findings file as the record.",
   );
   return lines.join("\n");
 }

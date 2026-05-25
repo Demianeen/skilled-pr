@@ -65,6 +65,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `autoReview.trigger=on-push` is set in config. Codex is skipped (no
   PostToolUse:Bash equivalent); Codex users continue with manual
   invocation.
+
+- **`autoReview.execution=subagent`.** Default execution mode in v1.
+  When the agent loads a required review skill, the reminder no
+  longer tells it to do the review inline — instead it instructs the
+  orchestrator to spawn an `Agent()` (Task tool) call per required
+  skill. The subagent does the review work and runs `attest` itself.
+  This decouples review correctness from orchestrator bias and lets
+  multiple skills run in parallel cleanly.
+
+- **`autoReview.sessionBriefing` slot template.** With
+  `sessionBriefing=true` (default), the subagent's prompt includes
+  a briefing template asking the orchestrator to fill `{{purpose}}`,
+  `{{constraints}}`, `{{decisions}}`, `{{exclusions}}` slots from
+  conversation context. Empty slots use `"(none stated)"`. Set to
+  `false` to spawn cold-context subagents (review from diff only).
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields

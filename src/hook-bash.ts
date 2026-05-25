@@ -73,9 +73,16 @@ export function isGitPushInvocation(command: string): boolean {
   if (tokens[0] !== "git") return false;
   if (tokens[1] !== "push") return false;
 
-  // Reject dry-runs (no actual remote state changes).
+  // Reject dry-runs (no actual remote state changes). Two forms:
+  //   - Long: `--dry-run` or `--dry-run=server` (handled inline below)
+  //   - Short: `-n` alone OR bundled (e.g. `-fn`, `-nv`, `-nfu`).
+  //     git's getopt-style bundling means any single-dash token containing
+  //     'n' includes the dry-run flag.
   for (const t of tokens.slice(2)) {
     if (t === "--dry-run" || t.startsWith("--dry-run=")) return false;
+    if (t.length >= 2 && t.startsWith("-") && !t.startsWith("--") && t.includes("n")) {
+      return false;
+    }
   }
 
   return true;

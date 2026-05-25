@@ -268,8 +268,19 @@ export async function hook() {
   // config load + early-bail on the bash command not being a push, so the
   // hot path stays cheap on the common case (every Bash invocation).
   if (event.hook_event_name === "PostToolUse" && event.tool_name === "Bash") {
-    const { maybeOnPushReminder } = await import("./hook-bash");
-    const reminder = await maybeOnPushReminder(event);
+    // Wrap in try/catch for the same reason the Skill branch (below) does:
+    // a malformed config or unexpected exception inside maybeOnPushReminder
+    // would otherwise let the hook exit non-zero with a stack trace on
+    // every `git push` invocation, breaking the file-header contract that
+    // a misconfigured skilled-pr never blocks the model.
+    let reminder: string | null = null;
+    try {
+      const { maybeOnPushReminder } = await import("./hook-bash");
+      reminder = await maybeOnPushReminder(event);
+    } catch (e) {
+      console.error(`skilled-pr hook: ${(e as Error).message}`);
+      return;
+    }
     if (reminder !== null) {
       console.log(
         JSON.stringify({

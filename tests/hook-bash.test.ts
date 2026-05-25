@@ -82,6 +82,22 @@ describe("isGitPushInvocation", () => {
     // After stripping the leading chdir, the rest has another operator.
     expect(isGitPushInvocation("cd /repo && git status && git push")).toBe(false);
   });
+
+  test("rejects `git push -n` (short alias for --dry-run)", () => {
+    expect(isGitPushInvocation("git push -n")).toBe(false);
+  });
+
+  test("rejects bundled short flags containing -n (e.g. -fn, -nv)", () => {
+    expect(isGitPushInvocation("git push -fn")).toBe(false);
+    expect(isGitPushInvocation("git push -nv")).toBe(false);
+    expect(isGitPushInvocation("git push -nfu origin main")).toBe(false);
+  });
+
+  test("accepts short flags WITHOUT -n", () => {
+    expect(isGitPushInvocation("git push -f")).toBe(true);
+    expect(isGitPushInvocation("git push -u origin main")).toBe(true);
+    expect(isGitPushInvocation("git push -v")).toBe(true);
+  });
 });
 
 describe("buildOnPushReminder", () => {

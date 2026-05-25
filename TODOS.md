@@ -36,3 +36,11 @@
   the bundled `/skilled-pr-update` skill when users have locally
   edited it. All info-severity; land as a single follow-up commit
   when convenient.
+- Publish a real GitHub Action at `Demianeen/skilled-pr/actions/bypass`
+  (bundled JS via ncc) to eliminate the ~3-5s `npx` download per PR
+  event. v1 uses `npx -y -p skilled-pr@<version>` to keep the surface
+  to one package; revisit once the CI cost is annoying or someone
+  files an issue.
+- `$GITHUB_EVENT_PATH` fast-path in `ci-resolve`: when running inside
+  a GitHub Actions workflow the PR metadata is already in the event
+  payload, no `gh api` call needed. Defer until measured.

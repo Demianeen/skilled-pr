@@ -49,6 +49,11 @@ switch (command) {
     await migrate(process.argv.slice(3));
     break;
   }
+  case "ci-resolve": {
+    const { ciResolve } = await import("./ci-resolve");
+    await ciResolve(process.argv.slice(3));
+    break;
+  }
   default:
     console.log(`skilled-pr v${pkg.version} - Open review transport for AI-native development
 
@@ -83,6 +88,12 @@ Usage:
                                      Use the /skilled-pr-update skill to
                                      orchestrate this end-to-end (detect pm,
                                      upgrade, migrate, re-run doctor).
+  skilled-pr ci-resolve --pr <num>   CI-side rule evaluation. Run inside a
+                       [--json]      GitHub Actions workflow to resolve the
+                       [--post]      active profile for a PR and (with --post)
+                                     post a bypass success or pending+CTA
+                                     status. enable-gate writes a workflow
+                                     template that invokes this.
   skilled-pr hook                    Internal: harness hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review

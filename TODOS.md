@@ -44,3 +44,22 @@
 - `$GITHUB_EVENT_PATH` fast-path in `ci-resolve`: when running inside
   a GitHub Actions workflow the PR metadata is already in the event
   payload, no `gh api` call needed. Defer until measured.
+- /review polish on PR #17 (all info-severity, batch into one
+  follow-up commit when convenient):
+    - `ci-resolve.ts` posts `pending` status on every workflow rerun;
+      align with `attest.ts:346`'s `statusAlreadyMatches(state,
+      description)` dedupe.
+    - Bypass description interpolates user-supplied rule names with
+      no length cap — GitHub silently truncates descriptions over
+      140 chars. Either truncate in `formatBypassDescription` or
+      enforce a maxLength in `validateRule`.
+    - `fetchPRContext` swallows error class; use `classifyGhError`
+      to surface auth/permission issues to the user.
+    - Workflow template hardcodes `node-version: '22'`. LTS through
+      2027 so safe for now; bump when 24 lands.
+    - `readOwnVersion` duplicated across init.ts, branch-protection.ts,
+      and migrate.ts. Extract to shared util.
+    - Bypass path doesn't guard against `config.requiredSkills` being
+      empty at top level (i.e., no rules match, defaults also empty);
+      result is an empty `for` loop that's effectively a no-op but
+      with no log line.

@@ -25,7 +25,6 @@
 // Local debugging: pass `--pr <num>` from your terminal and (optionally)
 // `--json` to skip posting and just dump the resolved profile.
 
-import { existsSync, readFileSync } from "node:fs";
 import { loadConfig } from "./config";
 import { run } from "./proc";
 import { parseGitHubRemote, buildStatusContext, classifyGhError } from "./github";

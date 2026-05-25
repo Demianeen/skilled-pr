@@ -288,9 +288,9 @@ describe("init() v1 file layout", () => {
     expect(readFileSync(".gitignore", "utf8")).toContain(".review/");
   });
 
-  test("installs the /skilled-pr-update skill for Claude Code", async () => {
+  test("installs the /skilled-pr-update skill for Claude Code (uppercase SKILL.md)", async () => {
     await init(["--install-mode=skip", "--for=claude"]);
-    const skillPath = ".claude/skills/skilled-pr-update/skill.md";
+    const skillPath = ".claude/skills/skilled-pr-update/SKILL.md";
     expect(existsSync(skillPath)).toBe(true);
     const content = readFileSync(skillPath, "utf8");
     expect(content).toContain("name: skilled-pr-update");
@@ -307,9 +307,9 @@ describe("init() v1 file layout", () => {
 
   test("skill install is idempotent: re-run produces byte-identical file", async () => {
     await init(["--install-mode=skip", "--for=claude"]);
-    const first = readFileSync(".claude/skills/skilled-pr-update/skill.md", "utf8");
+    const first = readFileSync(".claude/skills/skilled-pr-update/SKILL.md", "utf8");
     await init(["--install-mode=skip", "--for=claude"]);
-    expect(readFileSync(".claude/skills/skilled-pr-update/skill.md", "utf8")).toBe(first);
+    expect(readFileSync(".claude/skills/skilled-pr-update/SKILL.md", "utf8")).toBe(first);
   });
 
   test("does NOT write a root .skilledpr.jsonc anymore", async () => {

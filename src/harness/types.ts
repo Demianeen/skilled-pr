@@ -30,6 +30,20 @@ export interface Harness {
   /** Path (relative to repo root) of the settings/hooks file we write. */
   readonly settingsPath: string;
   /**
+   * Directory (relative to repo root) where this harness loads bundled
+   * skills from. Init copies the `/skilled-pr-update` skill template into
+   * `<skillsDir>/skilled-pr-update/<skillFileName>`. Claude Code uses
+   * `.claude/skills`; Codex uses `.codex/skills`.
+   */
+  readonly skillsDir: string;
+  /**
+   * Filename this harness expects for a skill's instructions inside
+   * `<skillsDir>/<skill-name>/`. Claude Code reads `skill.md` (lowercase);
+   * Codex's progressive-disclosure model expects `SKILL.md` (uppercase,
+   * mirroring the agentskills.io spec).
+   */
+  readonly skillFileName: string;
+  /**
    * Given the existing config (parsed JSON/JSONC, or `null` if no file
    * exists yet), return the merged config that includes skilled-pr's hook.
    * MUST be pure: no I/O, no side effects. The caller does the actual write.

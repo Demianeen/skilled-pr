@@ -9,11 +9,13 @@
 //   3. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
 //   4. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
 //      pick up autocompletion.
-//   5. Install hooks into every detected harness (Claude Code, Codex,
+//   5. Ensure `.review/` is gitignored.
+//   6. Install hooks into every detected harness (Claude Code, Codex,
 //      both). Detection scans for `.claude/` and `.codex/`. Override
 //      with `--for claude|codex|both`.
-//   6. Ensure `.review/` is gitignored.
-//   7. Print next-step guidance.
+//   7. Install the /skilled-pr-update skill into each harness's skills
+//      dir so the user can later upgrade via /skilled-pr-update.
+//   8. Print next-step guidance.
 //
 // All the per-harness specifics live in `src/harness/*`. This file is
 // orchestration + the install-mode UI.
@@ -196,6 +198,41 @@ export function findSchemaSource(): string | null {
 }
 
 /**
+ * Path to the bundled `/skilled-pr-update` skill template. Same lookup
+ * pattern as `findSchemaSource`. The template lives at
+ * `templates/skilled-pr-update.skill.md` in the package; init copies it
+ * into each detected harness's `skillsDir`.
+ */
+export function findUpdateSkillSource(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "templates", "skilled-pr-update.skill.md"),
+    resolvePath(here, "templates", "skilled-pr-update.skill.md"),
+    resolvePath(here, "..", "..", "templates", "skilled-pr-update.skill.md"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Install the `/skilled-pr-update` skill template into the given harness's
+ * skills directory. Idempotent: writes only if content differs. Returns
+ * true if the file was written/updated, false if already up to date.
+ */
+function installUpdateSkillForHarness(harness: Harness, templateContent: string): boolean {
+  const skillPath = join(harness.skillsDir, "skilled-pr-update", harness.skillFileName);
+  const existing = existsSync(skillPath) ? readFileSync(skillPath, "utf8") : null;
+  if (existing === templateContent) {
+    console.log(`✓ ${skillPath} already up to date (${harness.label})`);
+    return false;
+  }
+  writeFileWithMkdir(skillPath, templateContent);
+  console.log(`✓ ${existing === null ? "Created" : "Updated"} ${skillPath} (${harness.label})`);
+  return true;
+}
+
+/**
  * Interactive prompt asking the user which install mode they want.
  * Used only when stdin is a TTY; non-TTY callers fall back to
  * `detectDefaultInstallMode`.
@@ -366,6 +403,22 @@ export async function init(argv: string[] = []) {
       console.error(`\n${harness.label} (${harness.settingsPath}):\n${error.message}`);
     }
     process.exit(1);
+  }
+
+  // 9. Install the /skilled-pr-update skill template into each harness's
+  //    skills directory. The skill orchestrates future upgrades (pm-detect,
+  //    run install, migrate --plan/--apply, doctor). Skipped silently if the
+  //    template can't be located in the package (matches the schema behavior).
+  const skillSource = findUpdateSkillSource();
+  if (skillSource !== null) {
+    const templateContent = readFileSync(skillSource, "utf8");
+    for (const harness of harnesses) {
+      installUpdateSkillForHarness(harness, templateContent);
+    }
+  } else {
+    console.warn(
+      `⚠ Could not locate bundled templates/skilled-pr-update.skill.md — /skilled-pr-update skill not installed.`,
+    );
   }
 
   // 9. Next steps.

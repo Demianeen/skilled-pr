@@ -225,7 +225,7 @@ export function classifySkilledPRConfig(
       name: CONFIG_PATH,
       status: "fail",
       detail: `legacy ${LEGACY_CONFIG_PATH} detected at repo root`,
-      fix: `Move ${LEGACY_CONFIG_PATH} to ${CONFIG_PATH} and add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\` (PR #2 will ship an automated migrator). Or run \`skilled-pr init\` to regenerate.`,
+      fix: `Invoke \`/skilled-pr-update\` to migrate automatically, or run \`skilled-pr init\` to regenerate, or manually move ${LEGACY_CONFIG_PATH} to ${CONFIG_PATH} and add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\`.`,
       why: WHY_CONFIG,
     };
   }
@@ -306,7 +306,7 @@ export function classifySchemaVersion(config: SkilledPRConfig | null): CheckResu
     name: "schemaVersion",
     status: "warn",
     detail: `config is v${config.schemaVersion}, CLI is v${CURRENT_SCHEMA_VERSION}`,
-    fix: "Run `/skilled-pr-update` (PR #2 will ship this skill) or `skilled-pr init` to regenerate.",
+    fix: "Run `/skilled-pr-update` to migrate, or `skilled-pr init` to regenerate.",
     why: WHY_SCHEMA_VERSION,
   };
 }

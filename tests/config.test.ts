@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   parseConfig,
+  generateDefaultConfig,
   CURRENT_SCHEMA_VERSION,
   DEFAULT_SUMMARY_PROMPT,
   DEFAULT_BRIEFING_PROMPT,
@@ -169,9 +170,35 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`{ ${SV}, "summaryPrompt": "" }`)).toThrow(/summaryPrompt/);
   });
 
-  test("rejects non-string non-null summaryPrompt", () => {
+  test("rejects non-string non-array summaryPrompt", () => {
     expect(() => parseConfig(`{ ${SV}, "summaryPrompt": 42 }`)).toThrow(/summaryPrompt/);
-    expect(() => parseConfig(`{ ${SV}, "summaryPrompt": ["a", "b"] }`)).toThrow(/summaryPrompt/);
+    expect(() => parseConfig(`{ ${SV}, "summaryPrompt": {} }`)).toThrow(/summaryPrompt/);
+  });
+
+  test("accepts summaryPrompt as an array of lines, joined with newlines", () => {
+    // The array form is the readable multi-line authoring shape; it
+    // normalizes to a single joined string for everything downstream.
+    expect(parseConfig(`{ ${SV}, "summaryPrompt": ["a", "", "b"] }`).summaryPrompt).toBe("a\n\nb");
+    expect(parseConfig(`{ ${SV}, "summaryPrompt": ["only one line"] }`).summaryPrompt).toBe(
+      "only one line",
+    );
+  });
+
+  test("rejects an empty or all-blank summaryPrompt array", () => {
+    expect(() => parseConfig(`{ ${SV}, "summaryPrompt": [] }`)).toThrow(/summaryPrompt/);
+    expect(() => parseConfig(`{ ${SV}, "summaryPrompt": ["", ""] }`)).toThrow(/blank/);
+  });
+
+  test("rejects a summaryPrompt array containing non-strings", () => {
+    expect(() => parseConfig(`{ ${SV}, "summaryPrompt": ["ok", 42] }`)).toThrow(/summaryPrompt/);
+  });
+
+  test("generateDefaultConfig inlines the default as an array that round-trips", () => {
+    // init writes the built-in default inlined (line-array). Parsing that
+    // generated config must reproduce the exact default string.
+    const parsed = parseConfig(generateDefaultConfig());
+    expect(parsed.summaryPrompt).toBe(DEFAULT_SUMMARY_PROMPT);
+    expect(parsed.briefingPrompt).toBe(DEFAULT_BRIEFING_PROMPT);
   });
 
   test("DEFAULT_SUMMARY_PROMPT is a non-empty string", () => {

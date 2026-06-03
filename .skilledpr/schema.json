@@ -40,15 +40,15 @@
       "examples": ["error", "warning", "none"]
     },
     "summaryPrompt": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Per-skill prompt embedded in the hook reminder. Tells the skill how to render `.review/summary-<skill>.md`, which becomes the PR's artifact comment. Set to null to use the built-in default; run `skilled-pr show summaryPrompt` to print the full active text.",
-      "examples": [null, "Render findings as a markdown table with severity, file:line, and title."]
+      "description": "Per-skill prompt embedded in the hook reminder. Tells the skill how to render `.review/summary-<skill>.md`, which becomes the PR's artifact comment. Write it as an array of lines (joined with newlines — the readable multi-line form `init` generates), a single string, or null to track the built-in default. Run `skilled-pr show summaryPrompt` to print the full active text.",
+      "examples": [null, ["Render findings as a markdown table.", "", "Columns: severity, file:line, title."], "Render findings as a markdown table with severity, file:line, and title."]
     },
     "briefingPrompt": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template passed to a reviewing subagent when autoReview.execution is \"subagent\". Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. Set to null to use the built-in default; run `skilled-pr show briefingPrompt` to print the full active text.",
+      "description": "Slot-fill template passed to a reviewing subagent when autoReview.execution is \"subagent\". Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. Write it as an array of lines, a single string, or null to track the built-in default. Run `skilled-pr show briefingPrompt` to print the full active text.",
       "examples": [null]
     },
     "autoReview": {
@@ -147,8 +147,8 @@
             "description": "Override the top-level failOn when this rule matches."
           },
           "summaryPrompt": {
-            "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
-            "description": "Override the top-level summaryPrompt. null = use built-in default."
+            "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "array", "items": { "type": "string" }, "minItems": 1 }, { "type": "null" }],
+            "description": "Override the top-level summaryPrompt when this rule matches. Array of lines, a single string, or null to use the built-in default."
           }
         }
       }

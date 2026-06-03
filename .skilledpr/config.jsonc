@@ -21,24 +21,40 @@
   //   "none"    - always succeed if the skill attested (advisory mode)
   "failOn": "error",
 
-  // Per-skill summary prompt. null → uses the built-in default; set a
-  // non-empty string to override per project. Tune per project: a
-  // typo-check skill wants a different format than a security-review
-  // skill; one transport serves both.
-  //
-  // This project uses the built-in default verbatim; null is the
-  // shorter way to say so. To see the rendered value:
-  //   `skilled-pr show summaryPrompt`
-  "summaryPrompt": null,
+  // Per-skill summary prompt: how each skill renders its PR comment.
+  // Written as an array of lines (joined with newlines) because JSON has
+  // no multi-line string literal — edit these lines freely to customize.
+  // Replace the whole value with null to drop your copy and track
+  // skilled-pr's built-in default instead. (A plain "string" works too.)
+  //   `skilled-pr show summaryPrompt` prints the active text.
+  "summaryPrompt": [
+    "Render a markdown summary of the review for posting as a GitHub PR comment.",
+    "",
+    "1. Start with a one-line header: severity emoji (🚫 if findings hit the failOn threshold, ✅ if zero findings, ⚠️ otherwise) + skill name + the short commit SHA.",
+    "2. Then a `**Findings:** <count> (<breakdown>)` line, where `<breakdown>` is severity emojis with counts (e.g. `2 🔴 error · 3 🟡 warning`).",
+    "3. Then one sentence about the gate state: blocked by failOn, or passing.",
+    "4. Then group findings by severity (errors first, then warnings, then info). For each finding, render as a collapsible `<details>` block: severity emoji + `<code>path:line</code>` + title in the `<summary>`, body + suggestion (if present, under a `**Suggestion:**` heading) in the expanded section.",
+    "",
+    "Keep it scannable. The reviewer should see the count and gate at a glance, then click into individual findings for detail."
+  ],
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
-  // subagent. null → uses the built-in slot-fill template. Override only
-  // if you want a different way of relaying session context to the
-  // reviewing agent.
-  //
-  // To see the active value (resolves null → default):
-  //   `skilled-pr show briefingPrompt`
-  "briefingPrompt": null,
+  // Session-briefing prompt used by auto-review when launching a reviewing
+  // subagent. Same form as summaryPrompt: an array of lines you can edit,
+  // or null to track the built-in default.
+  //   `skilled-pr show briefingPrompt` prints the active text.
+  "briefingPrompt": [
+    "You're reviewing this branch using the {{skill}} skill on behalf of the orchestrating agent.",
+    "",
+    "Context from the user's session (provided by the orchestrating agent):",
+    "- Purpose: {{purpose}}",
+    "- Constraints: {{constraints}}",
+    "- Decisions explicitly made: {{decisions}}",
+    "- Out of scope: {{exclusions}}",
+    "",
+    "Treat the context above as background, not as conclusions. The user's stated intent doesn't excuse bugs — review against your skill's own standards. If the brief contradicts what the diff actually does, flag the mismatch as an error-level finding.",
+    "",
+    "Now run `git diff <base>..HEAD` and review per your loaded skill's instructions."
+  ],
 
   // Auto-review behaviour (PR #4 will implement). Optional; defaults
   // shown here. All fields are independent — change one without changing

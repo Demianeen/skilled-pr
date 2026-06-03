@@ -204,8 +204,41 @@ describe("show — field detail (positional arg)", () => {
 `,
     );
     const { stdout } = await runShow(["summaryPrompt"]);
-    expect(stdout).toContain("override");
+    // A non-null value that differs from the built-in default is "custom".
+    expect(stdout).toMatch(/source:\s+custom/);
     expect(stdout).toContain("custom prompt");
+  });
+
+  test("show summaryPrompt - inlined default is reported as default, not custom", async () => {
+    // init writes the default inlined (as a line-array). When the
+    // configured value equals the built-in default, `show` must say so —
+    // a non-null value is NOT automatically a customization.
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "summaryPrompt": ${JSON.stringify(DEFAULT_SUMMARY_PROMPT.split("\n"))}
+}
+`,
+    );
+    const { stdout } = await runShow(["summaryPrompt"]);
+    expect(stdout).toContain("inlined built-in default");
+    expect(stdout).not.toMatch(/source:\s+custom/);
+  });
+
+  test("array-form prompt round-trips to the joined string", async () => {
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "summaryPrompt": ["line one", "", "line three"]
+}
+`,
+    );
+    const { stdout } = await runShow(["summaryPrompt"]);
+    // The array is normalized to a newline-joined string; the Active value
+    // section shows the joined result.
+    expect(stdout).toContain("line one\n\nline three");
   });
 
   test("show rules - prints rule count", async () => {

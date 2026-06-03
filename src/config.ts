@@ -159,6 +159,55 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/**
+ * Normalize a prompt field into a single string (or null). Config authors
+ * may write a prompt three ways, because JSON has no multi-line string
+ * literal and a ~900-char escaped one-liner is unreadable:
+ *
+ *   - array of lines  (["line", "", "line"]) → joined with "\n". The
+ *     readable, editable multi-line form; this is what `init` writes.
+ *   - single string   ("...")                 → used as-is (one-liners).
+ *   - null                                     → tracks the built-in default.
+ *
+ * The array is purely an authoring convenience: it's normalized to a
+ * string HERE, so everything downstream (resolveProfile, formatReminder,
+ * attest, show) only ever deals with `string | null`. `field` names the
+ * field for error messages.
+ */
+export function normalizePrompt(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value === "string") {
+    if (value.length === 0) {
+      throw new Error(
+        `Invalid ${CONFIG_PATH}: "${field}" must be a non-empty string, an array of strings, or null`,
+      );
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      throw new Error(
+        `Invalid ${CONFIG_PATH}: "${field}" array must have at least one line (or use null for the built-in default)`,
+      );
+    }
+    if (!value.every((line) => typeof line === "string")) {
+      throw new Error(
+        `Invalid ${CONFIG_PATH}: "${field}" array must contain only strings (one per line)`,
+      );
+    }
+    const joined = value.join("\n");
+    if (joined.trim().length === 0) {
+      throw new Error(
+        `Invalid ${CONFIG_PATH}: "${field}" must not be entirely blank (use null for the built-in default)`,
+      );
+    }
+    return joined;
+  }
+  throw new Error(
+    `Invalid ${CONFIG_PATH}: "${field}" must be a non-empty string, an array of strings, or null (got ${JSON.stringify(value)})`,
+  );
+}
+
 function validateMatchBlock(block: unknown, ctx: string): MatchBlock {
   if (!isObject(block)) {
     throw new Error(`Invalid ${CONFIG_PATH}: ${ctx} must be an object`);
@@ -221,14 +270,7 @@ function validateRule(raw: unknown, idx: number): Rule {
     rule.failOn = raw.failOn;
   }
   if ("summaryPrompt" in raw) {
-    if (raw.summaryPrompt !== null) {
-      if (typeof raw.summaryPrompt !== "string" || raw.summaryPrompt.length === 0) {
-        throw new Error(
-          `Invalid ${CONFIG_PATH}: rules[${idx}].summaryPrompt must be a non-empty string or null`,
-        );
-      }
-    }
-    rule.summaryPrompt = raw.summaryPrompt as string | null;
+    rule.summaryPrompt = normalizePrompt(raw.summaryPrompt, `rules[${idx}].summaryPrompt`);
   }
   return rule;
 }
@@ -372,30 +414,10 @@ export function parseConfig(raw: string): SkilledPRConfig {
     merged.failOn = parsedObj.failOn;
   }
   if ("summaryPrompt" in parsedObj) {
-    if (parsedObj.summaryPrompt !== null) {
-      if (
-        typeof parsedObj.summaryPrompt !== "string" ||
-        parsedObj.summaryPrompt.length === 0
-      ) {
-        throw new Error(
-          `Invalid ${CONFIG_PATH}: "summaryPrompt" must be a non-empty string or null (got ${JSON.stringify(parsedObj.summaryPrompt)})`,
-        );
-      }
-    }
-    merged.summaryPrompt = parsedObj.summaryPrompt as string | null;
+    merged.summaryPrompt = normalizePrompt(parsedObj.summaryPrompt, "summaryPrompt");
   }
   if ("briefingPrompt" in parsedObj) {
-    if (parsedObj.briefingPrompt !== null) {
-      if (
-        typeof parsedObj.briefingPrompt !== "string" ||
-        parsedObj.briefingPrompt.length === 0
-      ) {
-        throw new Error(
-          `Invalid ${CONFIG_PATH}: "briefingPrompt" must be a non-empty string or null (got ${JSON.stringify(parsedObj.briefingPrompt)})`,
-        );
-      }
-    }
-    merged.briefingPrompt = parsedObj.briefingPrompt as string | null;
+    merged.briefingPrompt = normalizePrompt(parsedObj.briefingPrompt, "briefingPrompt");
   }
   if ("autoReview" in parsedObj) {
     merged.autoReview = validateAutoReview(parsedObj.autoReview);
@@ -437,6 +459,22 @@ export async function loadConfig(path = CONFIG_PATH): Promise<SkilledPRConfig | 
  * file ends with a trailing newline because tools (eslint, prettier,
  * git diff highlighting) all assume one and complain about its absence.
  */
+/**
+ * Render a prompt string as a pretty JSONC array-of-lines literal, indented
+ * to sit at `indent` spaces inside the generated config. Lets
+ * generateDefaultConfig write the built-in defaults in their readable,
+ * editable multi-line form (one array element per line) instead of null or
+ * an unreadable escaped one-liner. Round-trips: parseConfig joins the array
+ * back to exactly the original string.
+ */
+function promptToJsoncArray(prompt: string, indent: string): string {
+  const inner = prompt
+    .split("\n")
+    .map((line) => `${indent}  ${JSON.stringify(line)}`)
+    .join(",\n");
+  return `[\n${inner}\n${indent}]`;
+}
+
 export function generateDefaultConfig(): string {
   return `{
   // JSON Schema reference for editor autocompletion. The schema file is
@@ -461,23 +499,19 @@ export function generateDefaultConfig(): string {
   //   "none"    - always succeed if the skill attested (advisory mode)
   "failOn": "error",
 
-  // Per-skill summary prompt. null → uses the built-in default; set a
-  // non-empty string to override per project. Tune per project: a
-  // typo-check skill wants a different format than a security-review
-  // skill; one transport serves both.
-  //
-  // To see the active value (resolves null → default):
-  //   \`skilled-pr show summaryPrompt\`
-  "summaryPrompt": null,
+  // Per-skill summary prompt: how each skill renders its PR comment.
+  // Written as an array of lines (joined with newlines) because JSON has
+  // no multi-line string literal — edit these lines freely to customize.
+  // Replace the whole value with null to drop your copy and track
+  // skilled-pr's built-in default instead. (A plain "string" works too.)
+  //   \`skilled-pr show summaryPrompt\` prints the active text.
+  "summaryPrompt": ${promptToJsoncArray(DEFAULT_SUMMARY_PROMPT, "  ")},
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
-  // subagent. null → uses the built-in slot-fill template. Override only
-  // if you want a different way of relaying session context to the
-  // reviewing agent.
-  //
-  // To see the active value (resolves null → default):
-  //   \`skilled-pr show briefingPrompt\`
-  "briefingPrompt": null,
+  // Session-briefing prompt used by auto-review when launching a reviewing
+  // subagent. Same form as summaryPrompt: an array of lines you can edit,
+  // or null to track the built-in default.
+  //   \`skilled-pr show briefingPrompt\` prints the active text.
+  "briefingPrompt": ${promptToJsoncArray(DEFAULT_BRIEFING_PROMPT, "  ")},
 
   // Auto-review behaviour (PR #4 will implement). Optional; defaults
   // shown here. All fields are independent — change one without changing

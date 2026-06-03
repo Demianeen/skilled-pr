@@ -165,31 +165,39 @@ function getSchemaDescriptors(): Record<string, SchemaDescriptor> {
 // Output helpers
 // ---------------------------------------------------------------------------
 
-/** Format a value for compact one-line display. Long strings get truncated. */
-function compact(value: unknown, max = 60): string {
-  if (value === null) return "null";
-  if (typeof value === "string") {
-    if (value.length <= max) return JSON.stringify(value);
-    return JSON.stringify(value.slice(0, max - 1) + "…");
-  }
-  return JSON.stringify(value);
-}
-
 /** True for string values long enough to deserve a dedicated full-text section. */
 function isLongString(value: unknown): value is string {
   return typeof value === "string" && (value.length > 60 || value.includes("\n"));
 }
 
 /**
- * One-line description of a prompt's RESOLVED state for the overview.
- * Deliberately does NOT preview the text: a truncated prompt is more
- * misleading than useful (you can't tell where the cut happened, and it
- * looks like the whole value). Reports the source + character count; the
- * footer tip points at `skilled-pr show <field>` for the full text.
+ * Describe a prompt's RESOLVED (post-rule, effective) state for the
+ * overview. Deliberately does NOT preview the text: a truncated prompt is
+ * more misleading than useful. Reports whether the effective value matches
+ * the built-in default, plus its size; the footer tip points at
+ * `skilled-pr show <field>` for the full text.
+ *
+ * Source is a content comparison, not a null check: once `init` inlines
+ * the default into the config, "is this the built-in default?" can only be
+ * answered by comparing against DEFAULT_*. This is the same comparison the
+ * future update command uses to detect pristine-vs-customized prompts.
  */
-function describeResolvedPrompt(configured: string | null, resolved: string): string {
-  const suffix = `(${resolved.length} chars)`;
-  return configured === null ? `built-in default ${suffix}` : `custom override ${suffix}`;
+function describeResolvedPrompt(resolved: string, defaultText: string): string {
+  const size = `(${resolved.length} chars)`;
+  return resolved === defaultText ? `built-in default ${size}` : `custom ${size}`;
+}
+
+/**
+ * Describe how a prompt is written in the config FILE: null (tracking the
+ * built-in default), an inlined copy of the built-in default, or a custom
+ * value. Distinguishing "inlined default" from "custom" matters because
+ * `init` writes the default inlined — so a non-null value isn't
+ * automatically a customization.
+ */
+function describeConfiguredPrompt(configured: string | null, defaultText: string): string {
+  if (configured === null) return "null (tracks built-in default)";
+  if (configured === defaultText) return `inlined built-in default (${configured.length} chars)`;
+  return `custom (${configured.length} chars)`;
 }
 
 function printSection(title: string): void {
@@ -224,10 +232,10 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
   console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(config.requiredSkills)}`);
   console.log(`  ${ICON.info} failOn:          ${JSON.stringify(config.failOn)}`);
   console.log(
-    `  ${ICON.info} summaryPrompt:   ${config.summaryPrompt === null ? "null (built-in default)" : compact(config.summaryPrompt)}`,
+    `  ${ICON.info} summaryPrompt:   ${describeConfiguredPrompt(config.summaryPrompt, DEFAULT_SUMMARY_PROMPT)}`,
   );
   console.log(
-    `  ${ICON.info} briefingPrompt:  ${config.briefingPrompt === null ? "null (built-in default)" : compact(config.briefingPrompt)}`,
+    `  ${ICON.info} briefingPrompt:  ${describeConfiguredPrompt(config.briefingPrompt, DEFAULT_BRIEFING_PROMPT)}`,
   );
   console.log(`  ${ICON.info} rules:           ${config.rules.length} rule(s)`);
 
@@ -245,10 +253,10 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
   console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(profile.requiredSkills)}`);
   console.log(`  ${ICON.info} failOn:          ${JSON.stringify(profile.failOn)}`);
   console.log(
-    `  ${ICON.info} summaryPrompt:   ${describeResolvedPrompt(config.summaryPrompt, profile.summaryPrompt)}`,
+    `  ${ICON.info} summaryPrompt:   ${describeResolvedPrompt(profile.summaryPrompt, DEFAULT_SUMMARY_PROMPT)}`,
   );
   console.log(
-    `  ${ICON.info} briefingPrompt:  ${describeResolvedPrompt(config.briefingPrompt, profile.briefingPrompt)}`,
+    `  ${ICON.info} briefingPrompt:  ${describeResolvedPrompt(profile.briefingPrompt, DEFAULT_BRIEFING_PROMPT)}`,
   );
 
   console.log("");
@@ -277,7 +285,10 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
   const descriptors = getSchemaDescriptors();
   const desc = descriptors[field];
 
-  const overrideMap: Record<string, () => { value: unknown; defaultValue: unknown; resolved?: unknown }> = {
+  const overrideMap: Record<
+    string,
+    () => { value: unknown; defaultValue: unknown; resolved?: unknown; sourceLabel?: string }
+  > = {
     schemaVersion: () => ({
       value: config.schemaVersion,
       defaultValue: CURRENT_SCHEMA_VERSION,
@@ -298,11 +309,16 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
       value: config.summaryPrompt,
       defaultValue: null,
       resolved: config.summaryPrompt === null ? DEFAULT_SUMMARY_PROMPT : config.summaryPrompt,
+      // Prompt source is a content comparison, not a null check: init
+      // inlines the default, so a non-null value may still be the pristine
+      // default rather than a customization.
+      sourceLabel: describeConfiguredPrompt(config.summaryPrompt, DEFAULT_SUMMARY_PROMPT),
     }),
     briefingPrompt: () => ({
       value: config.briefingPrompt,
       defaultValue: null,
       resolved: config.briefingPrompt === null ? DEFAULT_BRIEFING_PROMPT : config.briefingPrompt,
+      sourceLabel: describeConfiguredPrompt(config.briefingPrompt, DEFAULT_BRIEFING_PROMPT),
     }),
     autoReview: () => ({
       value: config.autoReview,
@@ -332,7 +348,7 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
     return 1;
   }
 
-  const { value, defaultValue, resolved } = lookup();
+  const { value, defaultValue, resolved, sourceLabel } = lookup();
   printSection(`Field: ${field}`);
   if (desc?.type !== undefined) {
     const t = Array.isArray(desc.type) ? desc.type.join(" | ") : desc.type;
@@ -350,22 +366,26 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
   } else {
     console.log(`  ${ICON.info} current:  ${JSON.stringify(value)}`);
   }
+  // Prompt fields supply a content-based sourceLabel (null / inlined
+  // default / custom); other fields fall back to a structural override
+  // check against their default.
   const isOverridden = JSON.stringify(value) !== JSON.stringify(defaultValue);
-  console.log(`  ${ICON.info} source:   ${isOverridden ? "override (set in config)" : "built-in default"}`);
+  const source = sourceLabel ?? (isOverridden ? "override (set in config)" : "built-in default");
+  console.log(`  ${ICON.info} source:   ${source}`);
 
   // The effective value is what actually gets used at runtime: the
   // resolved value if one exists (e.g. a null prompt → built-in default),
   // otherwise the configured value.
   const effective = resolved !== undefined ? resolved : value;
-  const fromBuiltIn = resolved !== undefined && JSON.stringify(resolved) !== JSON.stringify(value);
+  const activeIsBuiltIn = sourceLabel !== undefined && sourceLabel.includes("built-in default");
   if (isLongString(effective)) {
-    printSection(`Active value${fromBuiltIn ? " (built-in default)" : ""}`);
+    printSection(`Active value${activeIsBuiltIn ? " (built-in default)" : ""}`);
     // Print the full text un-indented so it round-trips cleanly: a user
     // customizing the default can copy this block straight into the
     // config's `summaryPrompt` / `briefingPrompt` field with no leading
     // whitespace to strip.
     console.log(effective as string);
-  } else if (fromBuiltIn) {
+  } else if (resolved !== undefined && JSON.stringify(resolved) !== JSON.stringify(value)) {
     console.log(`  ${ICON.info} resolved: ${JSON.stringify(resolved)}  (null → built-in default)`);
   }
 

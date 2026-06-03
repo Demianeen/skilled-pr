@@ -175,6 +175,23 @@ function compact(value: unknown, max = 60): string {
   return JSON.stringify(value);
 }
 
+/** True for string values long enough to deserve a dedicated full-text section. */
+function isLongString(value: unknown): value is string {
+  return typeof value === "string" && (value.length > 60 || value.includes("\n"));
+}
+
+/**
+ * One-line description of a prompt's RESOLVED state for the overview.
+ * Deliberately does NOT preview the text: a truncated prompt is more
+ * misleading than useful (you can't tell where the cut happened, and it
+ * looks like the whole value). Reports the source + character count; the
+ * footer tip points at `skilled-pr show <field>` for the full text.
+ */
+function describeResolvedPrompt(configured: string | null, resolved: string): string {
+  const suffix = `(${resolved.length} chars)`;
+  return configured === null ? `built-in default ${suffix}` : `custom override ${suffix}`;
+}
+
 function printSection(title: string): void {
   console.log("");
   console.log(title);
@@ -228,10 +245,16 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
   console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(profile.requiredSkills)}`);
   console.log(`  ${ICON.info} failOn:          ${JSON.stringify(profile.failOn)}`);
   console.log(
-    `  ${ICON.info} summaryPrompt:   ${compact(profile.summaryPrompt)} ${config.summaryPrompt === null ? "(default)" : "(override)"}`,
+    `  ${ICON.info} summaryPrompt:   ${describeResolvedPrompt(config.summaryPrompt, profile.summaryPrompt)}`,
   );
   console.log(
-    `  ${ICON.info} briefingPrompt:  ${compact(profile.briefingPrompt)} ${config.briefingPrompt === null ? "(default)" : "(override)"}`,
+    `  ${ICON.info} briefingPrompt:  ${describeResolvedPrompt(config.briefingPrompt, profile.briefingPrompt)}`,
+  );
+
+  console.log("");
+  console.log(
+    "Tip: run `skilled-pr show <field>` to print a field's full value " +
+      "(e.g. `skilled-pr show summaryPrompt`).",
   );
 }
 
@@ -319,13 +342,33 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
     console.log(`  ${ICON.info} allowed:  ${JSON.stringify(desc.enum)}`);
   }
   console.log(`  ${ICON.info} default:  ${JSON.stringify(defaultValue)}`);
-  console.log(`  ${ICON.info} current:  ${JSON.stringify(value)}`);
+  // Long strings (prompts) print their full text in a dedicated section
+  // below, not inline — this view exists so the user can read the whole
+  // value without opening source. Keep the `current:` line scalar.
+  if (isLongString(value)) {
+    console.log(`  ${ICON.info} current:  (set; full text below)`);
+  } else {
+    console.log(`  ${ICON.info} current:  ${JSON.stringify(value)}`);
+  }
   const isOverridden = JSON.stringify(value) !== JSON.stringify(defaultValue);
   console.log(`  ${ICON.info} source:   ${isOverridden ? "override (set in config)" : "built-in default"}`);
-  if (resolved !== undefined && JSON.stringify(resolved) !== JSON.stringify(value)) {
-    // Show the runtime-resolved value when it differs (null prompt -> default).
-    console.log(`  ${ICON.info} resolved: ${compact(resolved, 120)}  (null → built-in default)`);
+
+  // The effective value is what actually gets used at runtime: the
+  // resolved value if one exists (e.g. a null prompt → built-in default),
+  // otherwise the configured value.
+  const effective = resolved !== undefined ? resolved : value;
+  const fromBuiltIn = resolved !== undefined && JSON.stringify(resolved) !== JSON.stringify(value);
+  if (isLongString(effective)) {
+    printSection(`Active value${fromBuiltIn ? " (built-in default)" : ""}`);
+    // Print the full text un-indented so it round-trips cleanly: a user
+    // customizing the default can copy this block straight into the
+    // config's `summaryPrompt` / `briefingPrompt` field with no leading
+    // whitespace to strip.
+    console.log(effective as string);
+  } else if (fromBuiltIn) {
+    console.log(`  ${ICON.info} resolved: ${JSON.stringify(resolved)}  (null → built-in default)`);
   }
+
   if (desc?.description !== undefined) {
     printSection("Description");
     for (const line of desc.description.split("\n")) {

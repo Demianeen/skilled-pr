@@ -42,13 +42,13 @@
     "summaryPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Per-skill prompt embedded in the hook reminder. Tells the skill how to render `.review/summary-<skill>.md`, which becomes the PR's artifact comment. null → built-in default (see DEFAULT_SUMMARY_PROMPT in src/config.ts).",
+      "description": "Per-skill prompt embedded in the hook reminder. Tells the skill how to render `.review/summary-<skill>.md`, which becomes the PR's artifact comment. Set to null to use the built-in default; run `skilled-pr show summaryPrompt` to print the full active text.",
       "examples": [null, "Render findings as a markdown table with severity, file:line, and title."]
     },
     "briefingPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "description": "Slot-fill template passed to a reviewing subagent when autoReview.execution is \"subagent\". Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. Set to null to use the built-in default; run `skilled-pr show briefingPrompt` to print the full active text.",
       "examples": [null]
     },
     "autoReview": {

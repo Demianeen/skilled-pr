@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { show } from "../src/show";
 import { findBundledSchemaPath } from "../src/show";
-import { CURRENT_SCHEMA_VERSION } from "../src/config";
+import { CURRENT_SCHEMA_VERSION, DEFAULT_SUMMARY_PROMPT } from "../src/config";
 
 // Minimal valid config (matches what `init` writes for a fresh repo).
 function writeConfig(dir: string, body?: string) {
@@ -95,6 +95,18 @@ describe("show — overview (no args)", () => {
     expect(stdout).toContain('"review"');
   });
 
+  test("overview reports prompt source + size and points at the full-text view (no truncated preview)", async () => {
+    writeConfig(tmp);
+    const { stdout } = await runShow([]);
+    // The resolved prompt line is honest about source + length instead of
+    // showing a misleading half-truncated preview.
+    expect(stdout).toMatch(/summaryPrompt:\s+built-in default \(\d+ chars\)/);
+    // The footer signposts where to read the full value.
+    expect(stdout).toContain("skilled-pr show <field>");
+    // No truncation ellipsis anywhere in the overview.
+    expect(stdout).not.toContain("…");
+  });
+
   test("explicit context flags override git lookup", async () => {
     writeConfig(tmp);
     const { stdout } = await runShow(["--branch", "release-1.0", "--labels", "security,p0"]);
@@ -158,7 +170,7 @@ describe("show — field detail (positional arg)", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test("show summaryPrompt - prints null as built-in default and resolved value", async () => {
+  test("show summaryPrompt - prints the FULL built-in default (no truncation)", async () => {
     writeConfig(tmp);
     const { stdout } = await runShow(["summaryPrompt"]);
     expect(stdout).toContain("Field: summaryPrompt");
@@ -166,7 +178,12 @@ describe("show — field detail (positional arg)", () => {
     expect(stdout).toContain("current:");
     expect(stdout).toContain("source:");
     expect(stdout).toContain("built-in default");
-    expect(stdout).toContain("resolved:");
+    // The drill-in view must show the WHOLE prompt, not a truncated
+    // preview. Assert the full default text appears verbatim and that no
+    // ellipsis truncation snuck in.
+    expect(stdout).toContain("Active value (built-in default)");
+    expect(stdout).toContain(DEFAULT_SUMMARY_PROMPT);
+    expect(stdout).not.toContain("…");
   });
 
   test("show requiredSkills - prints the array and source", async () => {

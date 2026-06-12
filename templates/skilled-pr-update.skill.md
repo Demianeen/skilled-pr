@@ -96,7 +96,7 @@ If apply fails partway through, the steps are idempotent — re-running picks up
 
 ## 7. Refresh this skill file too (optional)
 
-The bundled skill template can change between skilled-pr versions. If the user wants the new orchestration steps, the simplest path is to manually overwrite `.claude/skills/skilled-pr-update/skill.md` (or `.codex/skills/skilled-pr-update/SKILL.md`) with the template that ships in the upgraded skilled-pr package, located at `node_modules/skilled-pr/templates/skilled-pr-update.skill.md` (or the global install equivalent).
+The bundled skill template can change between skilled-pr versions. If the user wants the new orchestration steps, the simplest path is to manually overwrite `.claude/skills/skilled-pr-update/SKILL.md` (or `.codex/skills/skilled-pr-update/SKILL.md`) with the template that ships in the upgraded skilled-pr package, located at `node_modules/skilled-pr/templates/skilled-pr-update.skill.md` (or the global install equivalent).
 
 Skip this step if the user didn't ask for a skill refresh.
 

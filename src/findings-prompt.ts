@@ -20,12 +20,14 @@
 export function findingsSchemaForPrompt(): string {
   return [
     "Each finding must have:",
-    '  - path: string (repo-relative file path)',
-    "  - line: integer (1-based line on the right side of the diff)",
     '  - severity: "error" | "warning" | "info"',
     "  - title: short headline (1 line)",
     "  - body: full explanation (markdown supported)",
     "  - suggestion?: optional fix suggestion (string)",
+    "  - path?: string (repo-relative file path). Include when the finding is",
+    "    anchored to a specific location; omit for repo-level findings",
+    '    ("no CI configured", "dependency outdated"). Never fabricate one.',
+    "  - line?: integer (1-based; requires path)",
     '  - side?: "LEFT" | "RIGHT" (defaults to RIGHT)',
     "If your review found nothing, write an empty array `[]`.",
   ].join("\n");

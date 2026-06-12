@@ -61,9 +61,24 @@ describe("parseFindings", () => {
     expect(() => parseFindings('{"path": "a"}')).toThrow(/must be a JSON array/);
   });
 
-  test("rejects missing path", () => {
+  test("accepts a repo-level finding with no path/line", () => {
+    // path + line became optional when inline comments were dropped:
+    // findings like "no CI configured" have no honest file:line anchor.
+    const raw = JSON.stringify([{ severity: "info", title: "t", body: "b" }]);
+    const result = parseFindings(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBeUndefined();
+    expect(result[0].line).toBeUndefined();
+  });
+
+  test("rejects line without path (a line number without a file is meaningless)", () => {
     const raw = JSON.stringify([{ line: 1, severity: "info", title: "t", body: "b" }]);
-    expect(() => parseFindings(raw)).toThrow(/findings\[0\]\.path/);
+    expect(() => parseFindings(raw)).toThrow(/findings\[0\]\.line.*requires path/);
+  });
+
+  test("accepts path without line (file-level finding)", () => {
+    const raw = JSON.stringify([{ path: "a.ts", severity: "info", title: "t", body: "b" }]);
+    expect(parseFindings(raw)[0].path).toBe("a.ts");
   });
 
   test("rejects non-integer line", () => {

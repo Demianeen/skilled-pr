@@ -18,15 +18,28 @@ export type FailOn = "error" | "warning" | "none";
 // schema change forces a docstring change in the same edit.
 // ---------------------------------------------------------------------------
 
-export const FindingInputSchema = z.object({
-  path: z.string().min(1),
-  line: z.number().int().min(1),
-  side: z.enum(["LEFT", "RIGHT"]).optional(),
-  severity: z.enum(["error", "warning", "info"]),
-  title: z.string().min(1),
-  body: z.string().min(1),
-  suggestion: z.string().optional(),
-});
+export const FindingInputSchema = z
+  .object({
+    // path + line anchor a finding to a location. OPTIONAL since inline PR
+    // comments were dropped (PR #11): findings now feed only severity
+    // gating and the skill-rendered summary, and many legitimate findings
+    // are repo-level ("no CI configured", "dependency X outdated", "PR
+    // description contradicts the diff") with no honest file:line. Forcing
+    // an anchor made reviewers fabricate one.
+    path: z.string().min(1).optional(),
+    line: z.number().int().min(1).optional(),
+    side: z.enum(["LEFT", "RIGHT"]).optional(),
+    severity: z.enum(["error", "warning", "info"]),
+    title: z.string().min(1),
+    body: z.string().min(1),
+    suggestion: z.string().optional(),
+  })
+  // A line number without a file is meaningless — reject it explicitly so
+  // the error names the actual problem instead of surfacing downstream.
+  .refine((f) => f.line === undefined || f.path !== undefined, {
+    message: "line requires path (a line number without a file is meaningless)",
+    path: ["line"],
+  });
 
 export const FindingsInputSchema = z.array(FindingInputSchema);
 

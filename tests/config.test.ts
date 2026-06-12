@@ -355,3 +355,50 @@ describe("parseConfig", () => {
     ).toThrow(/rules\[0\]\.failOn/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// collectAllSkillNames — union for static branch protection
+// ---------------------------------------------------------------------------
+
+import { collectAllSkillNames } from "../src/config";
+
+describe("collectAllSkillNames", () => {
+  test("no rules → just the defaults", () => {
+    const config = parseConfig(`{ ${SV}, "requiredSkills": ["review"] }`);
+    expect(collectAllSkillNames(config)).toEqual(["review"]);
+  });
+
+  test("rule adding a new skill → appended after defaults", () => {
+    const config = parseConfig(
+      `{ ${SV}, "requiredSkills": ["review"], "rules": [{ "match": [{ "branch": "docs/*" }], "requiredSkills": ["docs-review"] }] }`,
+    );
+    expect(collectAllSkillNames(config)).toEqual(["review", "docs-review"]);
+  });
+
+  test("bypass and subset rules add nothing new", () => {
+    const config = parseConfig(
+      `{ ${SV}, "requiredSkills": ["review", "cso"], "rules": [
+        { "match": [{ "branch": "release-*" }], "requiredSkills": [] },
+        { "match": [{ "branch": "docs/*" }], "requiredSkills": ["review"] }
+      ] }`,
+    );
+    expect(collectAllSkillNames(config)).toEqual(["review", "cso"]);
+  });
+
+  test("dedupes across defaults and multiple rules, first occurrence wins", () => {
+    const config = parseConfig(
+      `{ ${SV}, "requiredSkills": ["review"], "rules": [
+        { "match": [{ "branch": "a/*" }], "requiredSkills": ["cso", "review"] },
+        { "match": [{ "branch": "b/*" }], "requiredSkills": ["cso", "docs-review"] }
+      ] }`,
+    );
+    expect(collectAllSkillNames(config)).toEqual(["review", "cso", "docs-review"]);
+  });
+
+  test("empty defaults + rule-only skills (opt-in gating)", () => {
+    const config = parseConfig(
+      `{ ${SV}, "requiredSkills": [], "rules": [{ "match": [{ "branch": "sec/*" }], "requiredSkills": ["cso"] }] }`,
+    );
+    expect(collectAllSkillNames(config)).toEqual(["cso"]);
+  });
+});

@@ -25,7 +25,7 @@
 // Local debugging: pass `--pr <num>` from your terminal and (optionally)
 // `--json` to skip posting and just dump the resolved profile.
 
-import { loadConfig } from "./config";
+import { collectAllSkillNames, loadConfig, type SkilledPRConfig } from "./config";
 import { run } from "./proc";
 import { parseGitHubRemote, buildStatusContext, classifyGhError } from "./github";
 import { resolveProfile, type PRContext, type ResolvedProfile } from "./resolve";
@@ -185,6 +185,71 @@ function existingStatusState(sha: string, context: string): string | null {
   }
 }
 
+/**
+ * GitHub rejects commit-status descriptions over 140 chars (422). Rule
+ * names are user-supplied and length-unbounded, so clamp every
+ * description we compose rather than hoping they stay short.
+ */
+export function clampDescription(description: string, max = 140): string {
+  if (description.length <= max) return description;
+  return `${description.slice(0, max - 1)}…`;
+}
+
+/**
+ * One status ci-resolve intends to post. Produced by `planStatusPosts`
+ * (pure); `ciResolve` filters out contexts that already carry a final
+ * attestation and POSTs the rest.
+ */
+export interface StatusPost {
+  context: string;
+  state: "success" | "pending";
+  description: string;
+}
+
+/**
+ * Decide which statuses to post for one PR.
+ *
+ * Branch protection requires the UNION of contexts across the config
+ * (defaults + every rule's override — see `collectAllSkillNames`), while
+ * the resolved profile says which skills THIS PR actually needs. So:
+ *
+ *   - every skill the profile requires      → pending + CTA (attest
+ *     replaces it with the final success/failure)
+ *   - every other registrable context       → success, "not required for
+ *     this PR" (otherwise branch protection waits forever on a context
+ *     nothing will ever post)
+ *
+ * The old standalone "bypass" branch is the degenerate case: the profile
+ * requires nothing, so every context gets the not-required success.
+ */
+export function planStatusPosts(
+  config: SkilledPRConfig,
+  profile: ResolvedProfile,
+): StatusPost[] {
+  const required = new Set(profile.requiredSkills);
+  const ruleSuffix = profile.matchedRuleName ? ` (rule: ${profile.matchedRuleName})` : "";
+  const posts: StatusPost[] = [];
+  for (const skill of collectAllSkillNames(config)) {
+    const context = buildStatusContext(config.statusName, skill);
+    if (required.has(skill)) {
+      posts.push({
+        context,
+        state: "pending",
+        description: clampDescription(
+          `Invoke /${skill} in Claude Code or Codex to complete this gate.`,
+        ),
+      });
+    } else {
+      posts.push({
+        context,
+        state: "success",
+        description: clampDescription(`Not required for this PR${ruleSuffix}.`),
+      });
+    }
+  }
+  return posts;
+}
+
 /** Post a commit status. Wraps the gh api call; returns true on success. */
 function postStatus(
   sha: string,
@@ -290,61 +355,41 @@ export async function ciResolve(argv: string[]): Promise<void> {
 
   if (!parsed.post) return;
 
-  // --- Status posting decision tree ----------------------------------------
+  // --- Status posting -------------------------------------------------------
   //
-  // Three cases:
-  //   1. requiredSkills is empty       → bypass success
-  //   2. existing status is success/failure → don't overwrite; attest owns it
-  //   3. otherwise                      → pending + CTA description
+  // `planStatusPosts` decides what every registrable context should say
+  // for THIS PR (pending+CTA for required skills, "not required" success
+  // for the rest — bypass falls out as the everything-success case). The
+  // only runtime filter: a context that already carries a final
+  // attestation (success/failure) belongs to attest — never overwrite it.
   if (!context.sha) {
     console.error("Skilled PR: PR has no head SHA; cannot post status.");
     process.exit(1);
   }
 
-  // For bypass: post per-required-skill OR a single bypass context?
-  // We post a single context based on statusName so branch protection
-  // can require this exact context. Use the resolved profile's matched
-  // rule name (if any) in the description for traceability.
-  if (profile.requiredSkills.length === 0) {
-    // Bypass — post success against each EXPECTED skill context.
-    // Branch protection lists checks by context name; if defaults
-    // expected `Skilled PR / review`, the bypass status must also be
-    // `Skilled PR / review` (with state=success) to satisfy the gate.
-    const expectedContexts = config.requiredSkills.map((s) =>
-      buildStatusContext(config.statusName, s),
-    );
-    const description = profile.matchedRuleName
-      ? `Bypass: no review required (matched rule: ${profile.matchedRuleName}).`
-      : `Bypass: no review required.`;
-    for (const ctx of expectedContexts) {
-      const existing = existingStatusState(context.sha, ctx);
-      if (existing === "success" || existing === "failure") {
-        // Attest already ran for this skill — leave it alone.
-        continue;
-      }
-      postStatus(context.sha, ctx, "success", description);
+  const posts = planStatusPosts(config, profile);
+  let pendingPosted = 0;
+  let notRequiredPosted = 0;
+  let attested = 0;
+  for (const post of posts) {
+    const existing = existingStatusState(context.sha, post.context);
+    if (existing === "success" || existing === "failure") {
+      attested++;
+      continue;
     }
-    console.log(`Skilled PR ✓ bypass status posted on ${context.sha.slice(0, 7)}.`);
+    if (postStatus(context.sha, post.context, post.state, post.description)) {
+      if (post.state === "pending") pendingPosted++;
+      else notRequiredPosted++;
+    }
+  }
+  const sha7 = context.sha.slice(0, 7);
+  const parts: string[] = [];
+  if (pendingPosted > 0) parts.push(`${pendingPosted} pending CTA(s)`);
+  if (notRequiredPosted > 0) parts.push(`${notRequiredPosted} not-required success(es)`);
+  if (parts.length === 0) {
+    console.log(`Skilled PR: all ${posts.length} context(s) already attested on ${sha7}.`);
     return;
   }
-
-  // Required-skills case: post pending+CTA for each skill that doesn't
-  // already have a status. attest will replace these later.
-  const skillsNeedingCTA = profile.requiredSkills.filter((skill) => {
-    const ctx = buildStatusContext(config.statusName, skill);
-    const existing = existingStatusState(context.sha!, ctx);
-    return existing !== "success" && existing !== "failure";
-  });
-  if (skillsNeedingCTA.length === 0) {
-    console.log(`Skilled PR: all required skill statuses already posted on ${context.sha.slice(0, 7)}.`);
-    return;
-  }
-  for (const skill of skillsNeedingCTA) {
-    const ctx = buildStatusContext(config.statusName, skill);
-    const description = `Invoke /${skill} in Claude Code or Codex to complete this gate.`;
-    postStatus(context.sha, ctx, "pending", description);
-  }
-  console.log(
-    `Skilled PR: posted ${skillsNeedingCTA.length} pending status(es) with CTAs on ${context.sha.slice(0, 7)}.`,
-  );
+  const suffix = attested > 0 ? `; left ${attested} existing attestation(s) untouched` : "";
+  console.log(`Skilled PR: posted ${parts.join(" + ")} on ${sha7}${suffix}.`);
 }

@@ -21,7 +21,7 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { run } from "./proc";
-import { loadConfig } from "./config";
+import { collectAllSkillNames, loadConfig } from "./config";
 import { findBypassWorkflowSource, writeFileWithMkdir } from "./init";
 import {
   parseGitHubRemote,
@@ -198,8 +198,15 @@ export async function enableGate() {
     console.error("Skilled PR: no .skilledpr/config.jsonc found. Run `skilled-pr init` first.");
     process.exit(1);
   }
-  if (config.requiredSkills.length === 0) {
-    console.error("Skilled PR: requiredSkills is empty in .skilledpr/config.jsonc. Add at least one skill.");
+  // Branch protection is static while rules resolve per-PR, so the gate
+  // must register the UNION of every skill any PR could require (top-level
+  // defaults + every rule's override). ci-resolve posts "not required for
+  // this PR" successes on the contexts a given PR's profile doesn't use.
+  const allSkills = collectAllSkillNames(config);
+  if (allSkills.length === 0) {
+    console.error(
+      "Skilled PR: no skills are required anywhere — requiredSkills is empty and no rule adds any. Add at least one skill.",
+    );
     process.exit(1);
   }
 
@@ -213,8 +220,8 @@ export async function enableGate() {
   // 3. Detect default branch
   const branch = getDefaultBranch();
 
-  // 4. Build expected contexts
-  const expected = buildRequiredContexts(config.requiredSkills, config.statusName);
+  // 4. Build expected contexts (union across defaults + rules)
+  const expected = buildRequiredContexts(allSkills, config.statusName);
 
   console.log(`Skilled PR: enabling gate on ${remote.owner}/${remote.repo}@${branch}`);
   console.log(`  Required checks: ${expected.join(", ")}`);

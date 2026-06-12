@@ -231,6 +231,10 @@ export function formatReminder(
   lines.push(`3. Run: \`${attestCommand}\``);
   lines.push("");
   lines.push(
+    "   If `skilled-pr` isn't on PATH (project-local install), prefix with your package runner: `npx skilled-pr ...` / `pnpm exec skilled-pr ...` / `yarn skilled-pr ...` / `bunx skilled-pr ...`.",
+  );
+  lines.push("");
+  lines.push(
     "4. If attest exits with code 2 (\"HEAD is not pushed\"), ask the user whether to push the branch. After they confirm, run `git push` and then re-run the attest command. Do NOT push without asking - pushing modifies the remote.",
   );
   lines.push("");

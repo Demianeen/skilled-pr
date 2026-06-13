@@ -63,3 +63,26 @@
       empty at top level (i.e., no rules match, defaults also empty);
       result is an empty `for` loop that's effectively a no-op but
       with no log line.
+- End-to-end test of multi-skill + rules against REAL GitHub branch
+  protection — the one path unit tests can't cover (ci-resolve.test.ts
+  already covers the resolution/posting decision table). Throwaway
+  public repo, local-built CLI standing in for the Action, so it runs
+  regardless of whether the stack has landed (orthogonal to merge
+  state). Config: two required skills with PLACEHOLDER names — the gate
+  is skill-agnostic (`attest --skill <name>` needs no installed skill,
+  so no gstack dependency) — plus three orthogonal rules, each isolating
+  one match-type × one override-type:
+    - `release`: branch glob `release-please--*` → `requiredSkills: []`
+      (bypass)
+    - `docs-light`: OR across `docs/*` + `chore/*` → `["review"]`
+      (subset; drops the 2nd skill)
+    - `deps-strict`: label `dependencies` → `failOn: "warning"` only
+      (partial override; skills unchanged — resolve.ts:148)
+  Five PRs (one per rule + a no-rule baseline + a PR matching two rules)
+  verify: the 2-context union registers via enable-gate, "not required"
+  greens unblock merge, the failOn flip (same warning finding goes red
+  under deps-strict / green without), and first-match-wins ordering
+  (resolve.ts:144). DO THIS BEFORE the first public release / npm
+  publish — it's the only real-branch-protection validation of PR #17's
+  union machinery. A bug it surfaces is fix-forward (no users yet; logic
+  already unit-tested).

@@ -216,6 +216,25 @@ export function findUpdateSkillSource(): string | null {
 }
 
 /**
+ * Path to the bundled GitHub Actions workflow template that fires on
+ * pull_request events and posts a bypass/pending status. Looked up the
+ * same way as the schema and skill templates. `enable-gate` (and the
+ * migrator) substitute `__SKILLED_PR_VERSION__` with the CLI's pinned
+ * version before writing.
+ */
+export function findBypassWorkflowSource(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "templates", "skilled-pr-bypass.yml"),
+    resolvePath(here, "templates", "skilled-pr-bypass.yml"),
+    resolvePath(here, "..", "..", "templates", "skilled-pr-bypass.yml"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * Install the `/skilled-pr-update` skill template into the given harness's
  * skills directory. Idempotent: writes only if content differs. Returns
  * true if the file was written/updated, false if already up to date.

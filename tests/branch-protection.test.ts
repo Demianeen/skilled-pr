@@ -1,8 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildRequiredContexts,
   diffContexts,
   buildInitialProtectionPayload,
+  renderBypassWorkflow,
+  writeBypassWorkflow,
+  BYPASS_WORKFLOW_PATH,
 } from "../src/branch-protection";
 
 // ---------------------------------------------------------------------------
@@ -112,5 +118,73 @@ describe("buildInitialProtectionPayload", () => {
       required_status_checks: { contexts: string[] };
     };
     expect(payload.required_status_checks.contexts).not.toBe(input);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderBypassWorkflow + writeBypassWorkflow
+// ---------------------------------------------------------------------------
+
+describe("renderBypassWorkflow", () => {
+  test("substitutes every occurrence of __SKILLED_PR_VERSION__", () => {
+    const template = "v=__SKILLED_PR_VERSION__ also v=__SKILLED_PR_VERSION__";
+    expect(renderBypassWorkflow(template, "0.5.0")).toBe("v=0.5.0 also v=0.5.0");
+  });
+
+  test("leaves non-placeholder content untouched", () => {
+    const template = "name: skilled-pr\nrun: skilled-pr ci-resolve";
+    expect(renderBypassWorkflow(template, "1.0.0")).toBe(template);
+  });
+
+  test("handles empty version (renders empty pin without crash)", () => {
+    expect(renderBypassWorkflow("v=__SKILLED_PR_VERSION__", "")).toBe("v=");
+  });
+});
+
+describe("writeBypassWorkflow", () => {
+  let tmp: string;
+  let prevCwd: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-bypass-wf-"));
+    prevCwd = process.cwd();
+    process.chdir(tmp);
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("creates the workflow file when missing", () => {
+    expect(existsSync(BYPASS_WORKFLOW_PATH)).toBe(false);
+    const result = writeBypassWorkflow();
+    expect(result).toBe("created");
+    expect(existsSync(BYPASS_WORKFLOW_PATH)).toBe(true);
+  });
+
+  test("written file contains a real version pin (not the placeholder)", () => {
+    writeBypassWorkflow();
+    const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    expect(content).not.toContain("__SKILLED_PR_VERSION__");
+    expect(content).toMatch(/skilled-pr@[\w.-]+/);
+  });
+
+  test("idempotent: second call returns 'skipped'", () => {
+    writeBypassWorkflow();
+    const second = writeBypassWorkflow();
+    expect(second).toBe("skipped");
+  });
+
+  test("re-renders when existing file content differs", () => {
+    // Pre-write a stale workflow file.
+    mkdirSync(join(tmp, ".github", "workflows"), { recursive: true });
+    writeFileSync(
+      join(tmp, BYPASS_WORKFLOW_PATH),
+      "name: skilled-pr bypass\n# stale content\n",
+    );
+    const result = writeBypassWorkflow();
+    expect(result).toBe("updated");
+    const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    expect(content).toContain("ci-resolve");
   });
 });

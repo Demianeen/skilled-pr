@@ -36,6 +36,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for Claude Code, `.codex/skills/...` for Codex). The skill walks
   the full upgrade flow: detect package manager, run the install
   upgrade, `migrate --plan/--apply`, then `doctor` to verify.
+
+- **`skilled-pr ci-resolve` for CI-side rule evaluation.** New
+  subcommand that resolves the active profile for a PR and (with
+  `--post`) writes a bypass `success` or pending+CTA status to
+  GitHub. Designed to run inside a workflow; tested locally via
+  `--pr <num> [--json]`.
+
+- **Bundled bypass workflow.** `skilled-pr enable-gate` now also
+  writes `.github/workflows/skilled-pr-bypass.yml` (version-pinned
+  to the CLI that wrote it). The workflow fires on pull_request
+  events and runs `ci-resolve --post`. PRs that match a rule with
+  `requiredSkills: []` auto-succeed via CI; PRs that need a review
+  get a pending status with a CTA description until `attest` runs.
+  No AI runs in CI — only the rule resolver. The migrator detects
+  pin drift after a CLI upgrade and offers `--apply` to refresh.
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields

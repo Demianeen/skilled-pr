@@ -175,11 +175,15 @@ Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-
 ```
 skilled-pr init                    Set up Skilled PR in this repo
 skilled-pr enable-gate             Add status checks to branch protection
+                                   AND write the bypass workflow file
 skilled-pr doctor                  Diagnose your local setup
 skilled-pr show [<field>]          Inspect the active config + resolved
                                    profile for the current branch
 skilled-pr migrate --plan          Preview a schema + bundled-file
 skilled-pr migrate --apply         refresh after upgrading the CLI
+skilled-pr ci-resolve --pr <num>   CI-side rule evaluation. Run by the
+                     --post        bundled .github/workflows/
+                                   skilled-pr-bypass.yml on PR events.
 skilled-pr attest --skill <name>   Post attestation that a skill ran
                   [--findings <path>]
 skilled-pr hook                    Internal: Claude Code hook entry point

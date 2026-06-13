@@ -507,3 +507,37 @@ export function generateDefaultConfig(): string {
 }
 `;
 }
+
+/**
+ * Every skill name this config can ever require: the top-level
+ * `requiredSkills` plus every rule's override, deduped, defaults first
+ * then rule skills in rule order.
+ *
+ * Why this exists: GitHub branch protection is STATIC (it requires an
+ * exact list of context names on every PR) while rules resolve per-PR.
+ * The only way the two compose is for `enable-gate` to register the
+ * UNION of contexts any PR could need, and for `ci-resolve` to post
+ * "not required for this PR" successes on the contexts a given PR's
+ * resolved profile doesn't use. Without the union, a rule that swaps in
+ * a different skill produces a context branch protection never learns
+ * about — and the PR can never merge.
+ */
+export function collectAllSkillNames(config: SkilledPRConfig): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const skill of config.requiredSkills) {
+    if (!seen.has(skill)) {
+      seen.add(skill);
+      out.push(skill);
+    }
+  }
+  for (const rule of config.rules) {
+    for (const skill of rule.requiredSkills ?? []) {
+      if (!seen.has(skill)) {
+        seen.add(skill);
+        out.push(skill);
+      }
+    }
+  }
+  return out;
+}

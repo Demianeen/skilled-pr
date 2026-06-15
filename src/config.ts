@@ -368,7 +368,7 @@ export function parseConfig(raw: string): SkilledPRConfig {
   if (parsedObj.schemaVersion !== CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `Invalid ${CONFIG_PATH}: "schemaVersion" must be ${CURRENT_SCHEMA_VERSION} (got ${JSON.stringify(parsedObj.schemaVersion)}). ` +
-        `If your config is newer than this CLI, upgrade skilled-pr; if older, regenerate via \`skilled-pr init\`.`,
+        `If your config is newer than this CLI, upgrade skilled-pr; if older, invoke \`/skilled-pr-update\` to migrate, or run \`skilled-pr init\` to regenerate.`,
     );
   }
 

@@ -79,6 +79,20 @@ describe("planMigration", () => {
     expect(() => plan.steps[0].apply()).toThrow(/Cannot auto-apply/);
   });
 
+  test("config parses but fails validation (schemaVersion 0) → refuse-to-apply step", async () => {
+    // schemaVersion 0 is syntactically valid JSONC but rejected by loadConfig.
+    // The planner falls through to the validating load and surfaces the error
+    // as a config-parse-error step — this is the path a stale/older config hits
+    // (and what a user sees if they hand-edit schemaVersion below the current).
+    writeMinimalConfig(tmp, 0);
+    writeBundledSchema(tmp);
+    const plan = await planMigration();
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0].id).toBe("config-parse-error");
+    expect(plan.steps[0].detail).toMatch(/schemaVersion/);
+    expect(() => plan.steps[0].apply()).toThrow(/Cannot auto-apply/);
+  });
+
   test("emits a step when bundled schema.json is missing", async () => {
     writeMinimalConfig(tmp);
     // Don't write the schema file.
@@ -165,6 +179,15 @@ describe("formatPlan", () => {
       steps: [{ id: "x", title: "x", apply: () => "" }],
     });
     expect(text).toContain("1 step:");
+  });
+
+  test("omits the --apply hint when showApplyHint is false", () => {
+    const text = formatPlan(
+      { currentSchemaVersion: 1, cliSchemaVersion: 1, steps: [{ id: "x", title: "x", apply: () => "" }] },
+      { showApplyHint: false },
+    );
+    expect(text).toContain("1 step:");
+    expect(text).not.toContain("--apply");
   });
 });
 
@@ -293,6 +316,13 @@ describe("migrate CLI entry", () => {
     await migrate(["--apply"]);
     // Schema is now refreshed.
     expect(readFileSync(join(tmp, ".skilledpr", "schema.json"), "utf8")).toBe(BUNDLED_SCHEMA);
+  });
+
+  test("--apply output does not tell the user to run --apply (no circular CTA)", async () => {
+    writeMinimalConfig(tmp);
+    writeBundledSchema(tmp, `{"$schema": "stale"}`);
+    await migrate(["--apply"]);
+    expect(logged.join("\n")).not.toContain("migrate --apply` to execute");
   });
 
   test("--apply on up-to-date project prints 'up to date' and skips apply", async () => {

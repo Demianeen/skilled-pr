@@ -72,9 +72,9 @@ export interface MigrationPlan {
 
 /**
  * Compare the on-disk config + bundled files against the CLI's expectations
- * and build the migration plan. Pure where possible — reads files but does
- * not mutate. `cwd` is parameterised so tests can point at fixture
- * directories.
+ * and build the migration plan. Pure where possible — reads files (relative
+ * to the process cwd) but does not mutate. Tests point it at fixtures by
+ * `process.chdir`-ing into a tmp dir (there is no cwd parameter).
  *
  * Read failures (missing config, missing bundled schema) are translated
  * into plan steps where appropriate — running migrate on a fresh repo with
@@ -249,7 +249,11 @@ export async function planMigration(): Promise<MigrationPlan> {
  * needed — call `planMigration()` and consume the structured `steps[]`
  * instead.
  */
-export function formatPlan(plan: MigrationPlan): string {
+export function formatPlan(plan: MigrationPlan, opts: { showApplyHint?: boolean } = {}): string {
+  // showApplyHint defaults true (the `--plan`/default view tells the user how
+  // to execute). The `--apply` path passes false — printing "run --apply"
+  // while already applying is self-contradictory.
+  const showApplyHint = opts.showApplyHint ?? true;
   const lines: string[] = [];
   const versionLine =
     plan.currentSchemaVersion === null
@@ -275,8 +279,10 @@ export function formatPlan(plan: MigrationPlan): string {
       }
     }
   }
-  lines.push("");
-  lines.push("Run `skilled-pr migrate --apply` to execute these steps.");
+  if (showApplyHint) {
+    lines.push("");
+    lines.push("Run `skilled-pr migrate --apply` to execute these steps.");
+  }
   return lines.join("\n");
 }
 
@@ -325,7 +331,8 @@ export async function migrate(argv: string[]): Promise<void> {
 
   if (apply) {
     // Print the plan first so the user always sees what's about to change.
-    console.log(formatPlan(plan));
+    // No apply-hint here — we're already applying, so "run --apply" is circular.
+    console.log(formatPlan(plan, { showApplyHint: false }));
     console.log("");
     if (plan.steps.length === 0) return;
     console.log("Applying:");

@@ -421,7 +421,7 @@ export async function init(argv: string[] = []) {
     );
   }
 
-  // 9. Next steps.
+  // 10. Next steps.
   const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:

@@ -38,9 +38,9 @@ export interface Harness {
   readonly skillsDir: string;
   /**
    * Filename this harness expects for a skill's instructions inside
-   * `<skillsDir>/<skill-name>/`. Claude Code reads `skill.md` (lowercase);
-   * Codex's progressive-disclosure model expects `SKILL.md` (uppercase,
-   * mirroring the agentskills.io spec).
+   * `<skillsDir>/<skill-name>/`. Both Claude Code and Codex use `SKILL.md`
+   * (uppercase) — see `docs/SKILL_AUTHORING.md`. Lowercase `skill.md` breaks
+   * on case-sensitive filesystems (Linux/Docker/WSL), so never use it.
    */
   readonly skillFileName: string;
   /**

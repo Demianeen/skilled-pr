@@ -5,7 +5,7 @@
 ```bash
 npm i -g skilled-pr                # install (or `pnpm add -g skilled-pr`)
 cd your-repo
-skilled-pr init                    # writes .skilledpr.jsonc + Claude Code hooks
+skilled-pr init                    # writes .skilledpr/config.jsonc + Claude Code hooks
 skilled-pr enable-gate             # adds the status check to branch protection
 # Open a PR, invoke /review in Claude Code, watch the gate light up green.
 ```
@@ -45,7 +45,7 @@ Branch protection requires the status check → PR is gated
 
 Three moving pieces, no servers:
 
-1. **`.skilledpr.jsonc`** — per-repo config: required skills, fail threshold, and the **summary prompt** that tells each skill how to render its PR comment. `init` writes a sensible default; you tune it per project.
+1. **`.skilledpr/config.jsonc`** — per-repo config: required skills, fail threshold, the **summary prompt** that tells each skill how to render its PR comment, and per-context `rules` (e.g. stricter gates on release branches, label-driven skill selection, author bypasses). `init` writes a sensible default; you tune it per project.
 2. **A Claude Code hook** — installed by `skilled-pr init`. Reads stdin, injects an attestation reminder when a required skill is invoked. The reminder embeds the summary prompt verbatim.
 3. **`skilled-pr attest`** — takes the skill-rendered summary, posts it as one per-skill PR comment (PATCH-updated in place on re-runs via an artifact marker), and posts a `success`/`failure` commit status. No inline-per-line noise; no template engine.
 
@@ -72,7 +72,7 @@ Requires [Node.js 22+](https://nodejs.org/) (the current LTS — older versions 
 In the repo you want to gate:
 
 ```bash
-skilled-pr init           # writes .skilledpr.jsonc + .claude/settings.json hooks
+skilled-pr init           # writes .skilledpr/config.jsonc + .claude/settings.json hooks
 skilled-pr enable-gate    # adds the Skilled PR status check to branch protection
 skilled-pr doctor         # verifies everything is wired up correctly
 ```
@@ -81,12 +81,26 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
 
 ## Configuration
 
-`.skilledpr.jsonc` (JSONC — comments and trailing commas allowed):
+`init` creates the v1 layout under `.skilledpr/`:
+
+```
+.skilledpr/
+├── config.jsonc       # per-repo settings
+└── schema.json        # JSON Schema (copied from the CLI's bundled schema/v1.json)
+```
+
+`.skilledpr/config.jsonc` (JSONC — comments and trailing commas allowed):
 
 ```jsonc
 {
+  "$schema": "./schema.json",
+
+  // Schema version. v1 is current. Bumped by skilled-pr on every
+  // breaking config change.
+  "schemaVersion": 1,
+
   // Which review skills must run before merge.
-  // See docs/COMPATIBLE_SKILLS.md for the list of skills that work today.
+  // See docs/COMPATIBLE_SKILLS.md for skills that work today.
   "requiredSkills": ["review"],
 
   // Name shown on the GitHub status check (e.g. "Skilled PR / review").
@@ -98,18 +112,28 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   //   "none"    - always succeed if the skill attested (advisory mode)
   "failOn": "error",
 
-  // REQUIRED. Embedded in the hook reminder; tells the skill how to render
-  // `.review/summary-<skill>.md`. The file becomes the PR's artifact
-  // comment verbatim. `init` writes a sensible default; tune per project.
+  // Per-skill summary prompt. null = use the built-in default; set a
+  // non-empty string to override per project. Tune per project — a
+  // typo-check skill wants a different format than a security-review
+  // skill, and one hardcoded template can't serve both.
   //
-  // Useful when different skills want different summary formats - a
-  // typo-check skill emitting a 'file:line: typo -> fix' table, vs a
-  // security-review skill embedding CVE references and threat scenarios.
-  // The calling skill already knows its domain; one hardcoded template
-  // can't serve all of them.
-  "summaryPrompt": "Render a markdown summary of the review for posting as a GitHub PR comment. ..."
+  // See `skilled-pr show summaryPrompt` for the rendered value.
+  "summaryPrompt": null,
+
+  // Per-context rule overlays. First matching rule wins; match blocks
+  // OR together, keys within a block (branch + author + labels) AND.
+  // Optional override fields fall back to the top-level when absent.
+  "rules": [
+    {
+      "name": "stricter review for release branches",
+      "match": [{ "branch": "release-*" }],
+      "failOn": "warning"
+    }
+  ]
 }
 ```
+
+`skilled-pr show` inspects the active config and prints what would apply for the current (or a hypothetical) PR context; `skilled-pr doctor` flags drift between the in-repo schema and the CLI's bundle.
 
 ## Compatible skills
 
@@ -130,7 +154,7 @@ Want to write your own? It's ~25 lines of markdown — see [docs/SKILL_AUTHORING
 
 For each required skill, two things post:
 
-1. **A summary comment** at the PR conversation level — one per skill. The skill renders the body itself, following your `summaryPrompt` from `.skilledpr.jsonc`. A typo-check skill's summary looks nothing like a security-review skill's; one transport, many shapes. Updated in place on each re-attestation.
+1. **A summary comment** at the PR conversation level — one per skill. The skill renders the body itself, following your `summaryPrompt` from `.skilledpr/config.jsonc`. A typo-check skill's summary looks nothing like a security-review skill's; one transport, many shapes. Updated in place on each re-attestation.
 2. **A status check** (`Skilled PR / <skill>`) — `success` if findings don't exceed `failOn`, `failure` if they do. This is what branch protection enforces.
 
 Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-updated in place via an HTML marker (`<!-- skilled-pr:artifact:<skill> -->`); the status check is replaced.
@@ -152,12 +176,14 @@ Re-running `attest` on the same SHA is idempotent: the summary comment is PATCH-
 skilled-pr init                    Set up Skilled PR in this repo
 skilled-pr enable-gate             Add status checks to branch protection
 skilled-pr doctor                  Diagnose your local setup
+skilled-pr show [<field>]          Inspect the active config + resolved
+                                   profile for the current branch
 skilled-pr attest --skill <name>   Post attestation that a skill ran
                   [--findings <path>]
 skilled-pr hook                    Internal: Claude Code hook entry point
 ```
 
-Most users only ever run `init` and `enable-gate` directly. `attest` is invoked by the model automatically; `hook` is invoked by Claude Code itself.
+Most users only ever run `init` and `enable-gate` directly. `attest` is invoked by the model automatically; `hook` is invoked by Claude Code itself. `show` is useful when you're tuning rules and want to verify what would resolve before opening a PR.
 
 ## Status
 

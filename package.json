@@ -10,6 +10,8 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench --run",
+    "bench:check": "vitest run tests/perf-budget.test.ts",
     "dev": "tsx src/cli.ts",
     "prepublishOnly": "pnpm run build"
   },
@@ -43,6 +45,7 @@
   "files": [
     "dist",
     "docs",
+    "schema",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

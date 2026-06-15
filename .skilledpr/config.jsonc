@@ -1,0 +1,85 @@
+{
+  // JSON Schema reference for editor autocompletion. The schema file is
+  // copied here by `skilled-pr init`; `skilled-pr doctor` warns if it
+  // drifts from the version bundled with the CLI.
+  "$schema": "./schema.json",
+
+  // Schema version. Bumped by skilled-pr on every breaking config change.
+  // To see the active value: `skilled-pr show schemaVersion`
+  "schemaVersion": 1,
+
+  // Which review skills must run before merge.
+  // To see the active value: `skilled-pr show requiredSkills`
+  "requiredSkills": ["review"],
+
+  // The name shown on GitHub status checks (e.g. "Skilled PR / review").
+  "statusName": "Skilled PR",
+
+  // When to fail the check based on finding severity:
+  //   "error"   - fail if any finding has severity "error" (default)
+  //   "warning" - fail on either "error" or "warning"
+  //   "none"    - always succeed if the skill attested (advisory mode)
+  "failOn": "error",
+
+  // Per-skill summary prompt: how each skill renders its PR comment.
+  // Written as an array of lines (joined with newlines) because JSON has
+  // no multi-line string literal — edit these lines freely to customize.
+  // Replace the whole value with null to drop your copy and track
+  // skilled-pr's built-in default instead. (A plain "string" works too.)
+  //   `skilled-pr show summaryPrompt` prints the active text.
+  "summaryPrompt": [
+    "Render a markdown summary of the review for posting as a GitHub PR comment.",
+    "",
+    "1. Start with a one-line header: severity emoji (🚫 if findings hit the failOn threshold, ✅ if zero findings, ⚠️ otherwise) + skill name + the short commit SHA.",
+    "2. Then a `**Findings:** <count> (<breakdown>)` line, where `<breakdown>` is severity emojis with counts (e.g. `2 🔴 error · 3 🟡 warning`).",
+    "3. Then one sentence about the gate state: blocked by failOn, or passing.",
+    "4. Then group findings by severity (errors first, then warnings, then info). For each finding, render as a collapsible `<details>` block: severity emoji + `<code>path:line</code>` + title in the `<summary>`, body + suggestion (if present, under a `**Suggestion:**` heading) in the expanded section.",
+    "",
+    "Keep it scannable. The reviewer should see the count and gate at a glance, then click into individual findings for detail."
+  ],
+
+  // Session-briefing prompt used by auto-review when launching a reviewing
+  // subagent. Same form as summaryPrompt: an array of lines you can edit,
+  // or null to track the built-in default.
+  //   `skilled-pr show briefingPrompt` prints the active text.
+  "briefingPrompt": [
+    "You're reviewing this branch using the {{skill}} skill on behalf of the orchestrating agent.",
+    "",
+    "Context from the user's session (provided by the orchestrating agent):",
+    "- Purpose: {{purpose}}",
+    "- Constraints: {{constraints}}",
+    "- Decisions explicitly made: {{decisions}}",
+    "- Out of scope: {{exclusions}}",
+    "",
+    "Treat the context above as background, not as conclusions. The user's stated intent doesn't excuse bugs — review against your skill's own standards. If the brief contradicts what the diff actually does, flag the mismatch as an error-level finding.",
+    "",
+    "Now run `git diff <base>..HEAD` and review per your loaded skill's instructions."
+  ],
+
+  // Auto-review behaviour (PR #4 will implement). Optional; defaults
+  // shown here. All fields are independent — change one without changing
+  // the others.
+  "autoReview": {
+    "trigger": "manual",
+    "execution": "subagent",
+    "parallel": true,
+    "sessionBriefing": true,
+    "skipPolicy": "agent-decides",
+    "askBeforeFiring": false
+  },
+
+  // Per-context overrides. Each rule's `match` array OR's together;
+  // keys within a single block (branch + author + labels) AND together.
+  // First matching rule wins. Empty array (the default) → top-level
+  // values apply to every PR.
+  //
+  // Example (uncomment to use):
+  //   "rules": [
+  //     {
+  //       "name": "stricter review for release branches",
+  //       "match": [{ "branch": "release-*" }],
+  //       "failOn": "warning"
+  //     }
+  //   ]
+  "rules": []
+}

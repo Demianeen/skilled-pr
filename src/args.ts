@@ -112,19 +112,33 @@ export function parseAttestArgs(args: string[]): ParsedAttestArgs {
 }
 
 export type ParsedInitArgs =
-  | { ok: true; forHarness?: string }
+  | { ok: true; forHarness?: string; installMode?: string }
   | { ok: false; error: string };
 
 /**
- * Parse `skilled-pr init` flags. Today the only flag is `--for`, which
- * forces hook installation to a specific harness (`claude` | `codex` |
- * `both`). Default behaviour (no flag) is auto-detection in init.ts.
+ * Parse `skilled-pr init` flags.
  *
- * Value validation (is "codex" a known harness?) happens in init.ts; this
- * parser only ensures `--for` was given a value when present.
+ * `--for <harness>` forces hook installation to a specific harness
+ * (`claude` | `codex` | `both`). Default behaviour (no flag) is
+ * auto-detection in init.ts.
+ *
+ * `--install-mode <mode>` controls whether init also runs an install
+ * command for skilled-pr itself:
+ *   - "local"  → npm/pnpm/yarn/bun add -D skilled-pr (devDependency)
+ *   - "global" → install -g skilled-pr
+ *   - "skip"   → don't install at all (CI / scripted setups)
+ * Default behaviour (no flag, TTY) is interactive prompt; default with
+ * no TTY is "local if package.json exists, else global".
+ *
+ * Value validation (is "codex" a known harness?) happens in init.ts;
+ * this parser only ensures the flags have values when present.
  */
 export function parseInitArgs(args: string[]): ParsedInitArgs {
-  const result = parseFlags(args, { for: "optional" });
+  const result = parseFlags(args, { for: "optional", "install-mode": "optional" });
   if (!result.ok) return { ok: false, error: result.error };
-  return { ok: true, forHarness: result.values.for };
+  return {
+    ok: true,
+    forHarness: result.values.for,
+    installMode: result.values["install-mode"],
+  };
 }

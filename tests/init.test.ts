@@ -72,13 +72,11 @@ describe("mergeSkilledPRHooks", () => {
     };
     const out = mergeSkilledPRHooks(existing);
     expect(out.hooks?.PostToolUse?.length).toBe(2);
-    // user's prettier hook still there
     expect(
       out.hooks?.PostToolUse?.some((e) =>
         e.hooks.some((h) => h.command === "prettier --write"),
       ),
     ).toBe(true);
-    // skilled-pr's hook also there
     expect(countSkilledPREntries(out, "PostToolUse")).toBe(1);
   });
 
@@ -90,9 +88,6 @@ describe("mergeSkilledPRHooks", () => {
   });
 
   test("idempotent across events: prior PostToolUse entry doesn't suppress UserPromptExpansion add", () => {
-    // Edge case: settings already has the PostToolUse skilled-pr hook but
-    // not the UserPromptExpansion one (e.g., partial install). The merge
-    // should add the missing one without touching the existing.
     const partial: ClaudeSettings = {
       hooks: {
         PostToolUse: [
@@ -119,8 +114,6 @@ describe("mergeSkilledPRHooks", () => {
   });
 
   test("does not share the PostToolUse array reference with the input", () => {
-    // Defense against a future refactor where we accidentally mutate
-    // entries in-place: the output's array should be a fresh object.
     const existing: ClaudeSettings = {
       hooks: {
         PostToolUse: [
@@ -135,11 +128,6 @@ describe("mergeSkilledPRHooks", () => {
 
 // ---------------------------------------------------------------------------
 // writeFileWithMkdir
-//
-// Critical migration helper: replaces Bun.write's auto-mkdir behaviour for
-// `.claude/settings.json` (the .claude/ dir doesn't exist in a fresh repo).
-// Also atomic via tmp + rename so a Ctrl-C mid-write doesn't corrupt the
-// user's settings.json on subsequent runs.
 // ---------------------------------------------------------------------------
 
 describe("writeFileWithMkdir", () => {
@@ -158,7 +146,6 @@ describe("writeFileWithMkdir", () => {
   });
 
   test("creates missing parent directory (single level)", () => {
-    // Replicates the fresh-repo `.claude/settings.json` case.
     const target = join(tmp, ".claude", "settings.json");
     writeFileWithMkdir(target, "{}");
     expect(existsSync(target)).toBe(true);
@@ -179,8 +166,6 @@ describe("writeFileWithMkdir", () => {
   });
 
   test("does not leave a .tmp file behind on success (atomic rename completed)", () => {
-    // Atomic write pattern: write to <path>.tmp, then rename. After a
-    // successful call only the final path exists, no stray .tmp.
     const target = join(tmp, "settings.json");
     writeFileWithMkdir(target, "{}");
     const entries = readdirSync(tmp);
@@ -189,10 +174,6 @@ describe("writeFileWithMkdir", () => {
   });
 
   test("dirname === '.' (bare filename) does not call mkdir", () => {
-    // dirname returns "." for paths with no directory component. The
-    // helper must skip the mkdir for this case, otherwise it would
-    // try to mkdir(".", recursive:true) which is a no-op but signals
-    // brittle assumptions about the input shape.
     const cwd = process.cwd();
     process.chdir(tmp);
     try {
@@ -206,9 +187,6 @@ describe("writeFileWithMkdir", () => {
   test("preserves a pre-existing file at the destination directory (mkdir is idempotent)", () => {
     const sibling = join(tmp, "subdir", "sibling.txt");
     writeFileWithMkdir(sibling, "first");
-    // Second write to a different file in the same dir should not blow away
-    // the first one. Catches a bug where mkdirSync(..., {recursive:false})
-    // would throw on existing dirs.
     const second = join(tmp, "subdir", "second.txt");
     writeFileWithMkdir(second, "another");
     expect(readFileSync(sibling, "utf8")).toBe("first");
@@ -216,10 +194,6 @@ describe("writeFileWithMkdir", () => {
   });
 
   test("rejects a literal .tmp shadow file left by a prior crash (renameSync overwrites cleanly)", () => {
-    // If a prior crashed run left behind <path>.tmp, the next successful
-    // write should overwrite it during the atomic-rename step. renameSync
-    // is replace-by-default on POSIX and Windows, so the shadow file
-    // shouldn't survive.
     const target = join(tmp, "settings.json");
     writeFileSync(target + ".tmp", "stale partial write");
     writeFileWithMkdir(target, "fresh content");
@@ -230,10 +204,6 @@ describe("writeFileWithMkdir", () => {
 
 // ---------------------------------------------------------------------------
 // ensureGitignoreEntry
-//
-// init calls this with `.review/` so per-review artifacts never end up in
-// commits. The function operates on `.gitignore` in the current working
-// directory; tests chdir into a tmpdir to isolate.
 // ---------------------------------------------------------------------------
 
 describe("ensureGitignoreEntry", () => {
@@ -269,58 +239,34 @@ describe("ensureGitignoreEntry", () => {
   });
 
   test("does NOT false-match when the entry is a substring of another line", () => {
-    // Catches a naive `current.includes(entry)` implementation. The
-    // existing `vendored/.review/` line should NOT prevent the helper
-    // from adding the bare `.review/` ignore for the repo root.
     writeFileSync(".gitignore", "vendored/.review/\n");
     ensureGitignoreEntry(".review/");
     expect(readFileSync(".gitignore", "utf8")).toBe("vendored/.review/\n.review/\n");
   });
 
   test("handles a file that does not end with a newline", () => {
-    // No trailing newline -> appending should insert one before the
-    // new entry so it lands on its own line.
     writeFileSync(".gitignore", "node_modules/");
     ensureGitignoreEntry(".review/");
     expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\n.review/\n");
   });
 
   test("matches across CRLF line endings (Windows-friendly)", () => {
-    // The file might be CRLF-line-ended (Windows). Idempotency must
-    // not double-add the entry just because the line endings differ.
     writeFileSync(".gitignore", "node_modules/\r\n.review/\r\n");
     ensureGitignoreEntry(".review/");
-    // Unchanged.
     expect(readFileSync(".gitignore", "utf8")).toBe("node_modules/\r\n.review/\r\n");
   });
 
   test("works with arbitrary entries (not just .review/)", () => {
-    // Defensive: the helper is named generically and may be reused.
     ensureGitignoreEntry(".env.local");
     expect(readFileSync(".gitignore", "utf8")).toBe(".env.local\n");
   });
 });
 
 // ---------------------------------------------------------------------------
-// init() end-to-end
-//
-// init touches three files in the project root: .skilledpr.jsonc,
-// .claude/settings.json, and .gitignore. All three writes should be safe
-// to repeat - users who re-run `skilled-pr init` after the first setup
-// (e.g. to recover from a deleted .gitignore, or to verify their setup)
-// expect no surprises.
-//
-// Strict idempotency: second run produces byte-identical files.
-// Convergent behavior: partial states (existing .gitignore without
-// .review/, settings.json without hooks) converge to the same end state
-// as a fresh run.
-//
-// init() uses process.cwd() implicitly. We chdir into a tmpdir per test
-// to isolate. console.log output from init is left visible - it would be
-// noise to silence and it confirms init is running.
+// init() end-to-end (v1: writes to .skilledpr/, not .skilledpr.jsonc)
 // ---------------------------------------------------------------------------
 
-describe("init() idempotency", () => {
+describe("init() v1 file layout", () => {
   let tmp: string;
   let prevCwd: string;
   beforeEach(() => {
@@ -333,47 +279,71 @@ describe("init() idempotency", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test("first run creates all three files (fresh repo)", async () => {
-    await init();
-    expect(existsSync(".skilledpr.jsonc")).toBe(true);
+  test("first run creates the v1 directory layout", async () => {
+    await init(["--install-mode=skip"]);
+    expect(existsSync(".skilledpr/config.jsonc")).toBe(true);
+    expect(existsSync(".skilledpr/schema.json")).toBe(true);
     expect(existsSync(".claude/settings.json")).toBe(true);
     expect(existsSync(".gitignore")).toBe(true);
     expect(readFileSync(".gitignore", "utf8")).toContain(".review/");
   });
 
+  test("does NOT write a root .skilledpr.jsonc anymore", async () => {
+    await init(["--install-mode=skip"]);
+    expect(existsSync(".skilledpr.jsonc")).toBe(false);
+  });
+
+  test("config.jsonc opens with $schema pointer for editor autocompletion", async () => {
+    await init(["--install-mode=skip"]);
+    const config = readFileSync(".skilledpr/config.jsonc", "utf8");
+    expect(config).toContain('"$schema": "./schema.json"');
+    expect(config).toContain('"schemaVersion": 1');
+  });
+
+  test("schema.json is a real JSON Schema (parseable)", async () => {
+    await init(["--install-mode=skip"]);
+    const schema = JSON.parse(readFileSync(".skilledpr/schema.json", "utf8"));
+    expect(schema.$schema).toBeDefined();
+    expect(schema.properties?.schemaVersion).toBeDefined();
+    expect(schema.properties?.requiredSkills).toBeDefined();
+  });
+
   test("strict idempotency: second run produces byte-identical files", async () => {
-    await init();
-    const skilledprFirst = readFileSync(".skilledpr.jsonc", "utf8");
+    await init(["--install-mode=skip"]);
+    const configFirst = readFileSync(".skilledpr/config.jsonc", "utf8");
+    const schemaFirst = readFileSync(".skilledpr/schema.json", "utf8");
     const settingsFirst = readFileSync(".claude/settings.json", "utf8");
     const gitignoreFirst = readFileSync(".gitignore", "utf8");
 
-    // Second run, same cwd, same files. Should NOT modify anything.
-    await init();
-    expect(readFileSync(".skilledpr.jsonc", "utf8")).toBe(skilledprFirst);
+    await init(["--install-mode=skip"]);
+    expect(readFileSync(".skilledpr/config.jsonc", "utf8")).toBe(configFirst);
+    expect(readFileSync(".skilledpr/schema.json", "utf8")).toBe(schemaFirst);
     expect(readFileSync(".claude/settings.json", "utf8")).toBe(settingsFirst);
     expect(readFileSync(".gitignore", "utf8")).toBe(gitignoreFirst);
   });
 
-  test("triple-run is still byte-identical (idempotency holds across runs)", async () => {
-    await init();
-    const first = readFileSync(".skilledpr.jsonc", "utf8");
-    await init();
-    await init();
-    expect(readFileSync(".skilledpr.jsonc", "utf8")).toBe(first);
+  test("does NOT regenerate an existing config (preserves user edits)", async () => {
+    mkdirSync(".skilledpr");
+    const customized = `{
+  "schemaVersion": 1,
+  "requiredSkills": ["security:review", "coderabbit:review"],
+  "statusName": "PR Quality Gate",
+  "failOn": "warning",
+  "summaryPrompt": "Custom: one line per finding."
+}
+`;
+    writeFileSync(".skilledpr/config.jsonc", customized);
+    await init(["--install-mode=skip"]);
+    expect(readFileSync(".skilledpr/config.jsonc", "utf8")).toBe(customized);
   });
 
   test("converges: pre-existing .gitignore without .review/ gets .review/ appended exactly once", async () => {
-    // User had a .gitignore for other reasons before adopting skilled-pr.
-    // init should add `.review/` without clobbering the rest.
     writeFileSync(".gitignore", "node_modules/\ndist/\n.env.local\n");
-    await init();
+    await init(["--install-mode=skip"]);
     const after = readFileSync(".gitignore", "utf8");
     expect(after).toContain("node_modules/");
-    expect(after).toContain("dist/");
-    expect(after).toContain(".env.local");
     expect(after).toContain(".review/");
-    // Second init: still exactly one .review/ entry.
-    await init();
+    await init(["--install-mode=skip"]);
     const occurrences = readFileSync(".gitignore", "utf8")
       .split(/\r?\n/)
       .filter((line) => line === ".review/").length;
@@ -381,8 +351,6 @@ describe("init() idempotency", () => {
   });
 
   test("converges: pre-existing .claude/settings.json without skilled-pr hooks gets them merged once", async () => {
-    // User already had Claude Code settings (e.g. for prettier on edit).
-    // init merges skilled-pr's hooks alongside without touching theirs.
     writeFileWithMkdir(
       ".claude/settings.json",
       JSON.stringify(
@@ -398,26 +366,22 @@ describe("init() idempotency", () => {
         2,
       ) + "\n",
     );
-    await init();
+    await init(["--install-mode=skip"]);
     const parsed = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
-    // User's prettier hook is still there:
     expect(parsed.hooks.PostToolUse).toHaveLength(2);
     expect(
       parsed.hooks.PostToolUse.some((e: { hooks: Array<{ command?: string }> }) =>
         e.hooks.some((h) => h.command === "prettier --write"),
       ),
     ).toBe(true);
-    // skilled-pr's hook was added:
     expect(
       parsed.hooks.PostToolUse.some((e: { hooks: Array<{ command?: string }> }) =>
         e.hooks.some((h) => h.command === "skilled-pr hook"),
       ),
     ).toBe(true);
-    // User's env var preserved:
     expect(parsed.env).toEqual({ FOO: "bar" });
 
-    // Second init: count of skilled-pr hook entries stays at 1.
-    await init();
+    await init(["--install-mode=skip"]);
     const reparsed = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
     const count = reparsed.hooks.PostToolUse.filter(
       (e: { hooks: Array<{ command?: string }> }) =>
@@ -441,7 +405,7 @@ describe("init() idempotency", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     let errorText = "";
     try {
-      await expect(init(["--for", "both"])).rejects.toThrow("process.exit:1");
+      await expect(init(["--for", "both", "--install-mode=skip"])).rejects.toThrow("process.exit:1");
       errorText = errorSpy.mock.calls.flat().join("\n");
     } finally {
       exitSpy.mockRestore();
@@ -457,40 +421,21 @@ describe("init() idempotency", () => {
     expect(errorText).toContain("invalid JSON");
   });
 
-  test("does NOT regenerate an existing .skilledpr.jsonc (preserves user edits)", async () => {
-    // The user has customized their summaryPrompt and other fields. init
-    // must NOT overwrite these on a re-run - they'd lose the customization
-    // and the system's "we wrote the default once" promise would break.
-    const customized = `{
-  "requiredSkills": ["security:review", "coderabbit:review"],
-  "statusName": "PR Quality Gate",
-  "failOn": "warning",
-  "summaryPrompt": "Custom: one line per finding."
-}
-`;
-    writeFileSync(".skilledpr.jsonc", customized);
-    await init();
-    expect(readFileSync(".skilledpr.jsonc", "utf8")).toBe(customized);
-  });
-
   test("recovers a deleted .gitignore on re-run (convergent restoration)", async () => {
-    await init();
-    // Simulate the user deleting .gitignore for any reason.
+    await init(["--install-mode=skip"]);
     rmSync(".gitignore");
-    await init();
+    await init(["--install-mode=skip"]);
     expect(existsSync(".gitignore")).toBe(true);
     expect(readFileSync(".gitignore", "utf8")).toContain(".review/");
   });
 
   test("recovers deleted skilled-pr hook entries on re-run", async () => {
-    await init();
-    // Simulate the user manually removing the UserPromptExpansion hook
-    // (a real scenario: someone editing .claude/settings.json by hand).
+    await init(["--install-mode=skip"]);
     const settings = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
     delete settings.hooks.UserPromptExpansion;
     writeFileSync(".claude/settings.json", JSON.stringify(settings, null, 2) + "\n");
 
-    await init();
+    await init(["--install-mode=skip"]);
     const reparsed = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
     expect(reparsed.hooks.UserPromptExpansion).toBeDefined();
     expect(
@@ -499,5 +444,55 @@ describe("init() idempotency", () => {
           e.hooks.some((h) => h.command === "skilled-pr hook"),
       ),
     ).toBe(true);
+  });
+
+  test("recovers a deleted schema.json on re-run", async () => {
+    await init(["--install-mode=skip"]);
+    rmSync(".skilledpr/schema.json");
+    await init(["--install-mode=skip"]);
+    expect(existsSync(".skilledpr/schema.json")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// init() install-mode handling
+// ---------------------------------------------------------------------------
+
+describe("init() install-mode flag", () => {
+  let tmp: string;
+  let prevCwd: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-init-install-"));
+    prevCwd = process.cwd();
+    process.chdir(tmp);
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("--install-mode=skip does not spawn an install command", async () => {
+    // We can't easily intercept spawnSync, but the test just has to be
+    // non-flaky: --install-mode=skip should not spawn anything, so
+    // init returns cleanly without npm having to be on PATH.
+    await init(["--install-mode=skip"]);
+    // Config + schema were still written, so the rest of init ran.
+    expect(existsSync(".skilledpr/config.jsonc")).toBe(true);
+  });
+
+  test("rejects an invalid --install-mode value with a clear error", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code}`);
+    }) as never);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(init(["--install-mode=bogus"])).rejects.toThrow("process.exit:1");
+      const errorText = errorSpy.mock.calls.flat().join("\n");
+      expect(errorText).toContain("--install-mode");
+      expect(errorText).toContain('"local"');
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 });

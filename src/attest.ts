@@ -16,7 +16,7 @@ import {
   wrapWithArtifactMarker,
   type Finding,
 } from "./findings";
-import type { SkilledPRConfig } from "./config";
+import { getCurrentPRContext, resolveProfile, type ResolvedProfile } from "./resolve";
 
 type StatusState = "success" | "failure";
 
@@ -32,9 +32,14 @@ export async function attest(args: string[]) {
 
   const config = await loadConfig();
   if (!config) {
-    console.warn("Skilled PR: no .skilledpr.jsonc found. Run 'skilled-pr init' to set up.");
+    console.warn("Skilled PR: no .skilledpr/config.jsonc found. Run 'skilled-pr init' to set up.");
     process.exit(0);
   }
+
+  // Resolve the active profile against the current branch so per-rule
+  // failOn overrides (e.g. "warning on release branches") affect the
+  // gate decision below.
+  const profile = resolveProfile(config, getCurrentPRContext());
 
   const sha = getCommitSha();
   if (!sha) {
@@ -89,7 +94,7 @@ export async function attest(args: string[]) {
         `Skilled PR: attest requires --summary. The skill should render ` +
           `.review/summary-<slug>.md and pass its path. If your invocation ` +
           `is missing --summary, the hook reminder is stale - re-invoke the ` +
-          `skill or check .skilledpr.jsonc has summaryPrompt set.`,
+          `skill or check .skilledpr/config.jsonc has summaryPrompt set.`,
       );
       process.exit(1);
     }
@@ -123,7 +128,7 @@ export async function attest(args: string[]) {
 
   // --- Status (with severity gate) -----------------------------------------
 
-  const { state, description } = computeStatus(findings, config, skillName);
+  const { state, description } = computeStatus(findings, profile, skillName);
   const context = buildStatusContext(config.statusName, skillName);
 
   if (statusAlreadyMatches(remote, sha, context, state, description)) {
@@ -140,12 +145,12 @@ export async function attest(args: string[]) {
 
 function computeStatus(
   findings: Finding[] | null,
-  config: SkilledPRConfig,
+  profile: ResolvedProfile,
   skillName: string,
 ): { state: StatusState; description: string } {
   const description = buildStatusDescription(skillName, findings);
   if (findings === null) return { state: "success", description };
-  const blocking = findingsExceedingThreshold(findings, config.failOn);
+  const blocking = findingsExceedingThreshold(findings, profile.failOn);
   return { state: blocking.length > 0 ? "failure" : "success", description };
 }
 
@@ -178,7 +183,7 @@ function loadSummary(path: string): string {
     console.error(
       `Skilled PR: summary file not found: ${path}. ` +
         `The hook reminder asked the skill to write this file; if your skill ` +
-        `doesn't produce summaries yet, remove the \`summaryPrompt\` from .skilledpr.jsonc ` +
+        `doesn't produce summaries yet, remove the \`summaryPrompt\` from .skilledpr/config.jsonc ` +
         `or drop the --summary flag.`,
     );
     process.exit(1);

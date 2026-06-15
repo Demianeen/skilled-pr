@@ -1,0 +1,10 @@
+{
+  // Forward-incompatible config (schemaVersion bumped past what this CLI
+  // knows). Used to test that the parser rejects unsupported versions
+  // with a clear "upgrade skilled-pr" message rather than parsing the
+  // body and silently dropping fields it doesn't recognise.
+  "schemaVersion": 2,
+  "requiredSkills": ["review"],
+  "statusName": "Skilled PR",
+  "rules": []
+}

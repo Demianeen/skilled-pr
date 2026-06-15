@@ -181,13 +181,18 @@ describe("parseAttestArgs", () => {
 
 describe("parseInitArgs", () => {
   test("no args - returns ok with no harness override (auto-detect path)", () => {
-    expect(parseInitArgs([])).toEqual({ ok: true, forHarness: undefined });
+    expect(parseInitArgs([])).toEqual({
+      ok: true,
+      forHarness: undefined,
+      installMode: undefined,
+    });
   });
 
   test("--for codex - returns the harness name", () => {
     expect(parseInitArgs(["--for", "codex"])).toEqual({
       ok: true,
       forHarness: "codex",
+      installMode: undefined,
     });
   });
 
@@ -195,6 +200,39 @@ describe("parseInitArgs", () => {
     expect(parseInitArgs(["--for=codex"])).toEqual({
       ok: true,
       forHarness: "codex",
+      installMode: undefined,
+    });
+  });
+
+  test("--install-mode=local sets the field", () => {
+    expect(parseInitArgs(["--install-mode=local"])).toEqual({
+      ok: true,
+      forHarness: undefined,
+      installMode: "local",
+    });
+  });
+
+  test("--install-mode global (space form) sets the field", () => {
+    expect(parseInitArgs(["--install-mode", "global"])).toEqual({
+      ok: true,
+      forHarness: undefined,
+      installMode: "global",
+    });
+  });
+
+  test("--install-mode=skip is accepted by the parser (validation happens in init.ts)", () => {
+    expect(parseInitArgs(["--install-mode=skip"])).toEqual({
+      ok: true,
+      forHarness: undefined,
+      installMode: "skip",
+    });
+  });
+
+  test("--for and --install-mode compose", () => {
+    expect(parseInitArgs(["--for", "codex", "--install-mode=skip"])).toEqual({
+      ok: true,
+      forHarness: "codex",
+      installMode: "skip",
     });
   });
 
@@ -214,6 +252,12 @@ describe("parseInitArgs", () => {
     const result = parseInitArgs(["--for="]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/--for.*requires a value/i);
+  });
+
+  test("rejects --install-mode with no value", () => {
+    const result = parseInitArgs(["--install-mode"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/--install-mode.*requires a value/i);
   });
 
   test("rejects positional arguments", () => {

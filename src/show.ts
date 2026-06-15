@@ -1,0 +1,443 @@
+// skilled-pr show
+//
+// Inspection / debugging UI for the v1 config + rule resolver. Three
+// modes, derived from the args:
+//
+//   1. No args (or just context flags):
+//        skilled-pr show
+//        skilled-pr show --branch release-1.0 --labels security,p0
+//      Prints the config overview AND the resolved profile for the
+//      given context (defaults to the current branch via git).
+//
+//   2. One positional arg = field name:
+//        skilled-pr show summaryPrompt
+//        skilled-pr show rules
+//      Prints field details: type, default, current configured value,
+//      whether the value came from a built-in default or an override,
+//      and the description from the JSON schema (if available).
+//
+//   3. With --reminder:
+//        skilled-pr show --reminder
+//        skilled-pr show --reminder --branch release-1.0
+//      In addition to the overview, prints the literal reminder text
+//      that would be injected for the FIRST required skill in the
+//      resolved profile. Useful for "what does the model actually
+//      see?" debugging.
+//
+// Implementation deliberately reuses resolveProfile + formatReminder so
+// the output here is byte-identical to what the hook produces.
+
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import {
+  CONFIG_PATH,
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_BRIEFING_PROMPT,
+  DEFAULT_SUMMARY_PROMPT,
+  loadConfig,
+  type SkilledPRConfig,
+} from "./config";
+import {
+  formatReminder,
+  getCurrentPRContext,
+  resolveProfile,
+  type PRContext,
+  type ResolvedProfile,
+} from "./resolve";
+
+// ---------------------------------------------------------------------------
+// Output icons (matches doctor's convention: ✓ · ⚠ ✗)
+// ---------------------------------------------------------------------------
+
+const ICON = {
+  info: "·",
+  ok: "✓",
+  warn: "⚠",
+  fail: "✗",
+} as const;
+
+// ---------------------------------------------------------------------------
+// Arg parsing
+//
+// show has a mixed-shape CLI (one optional positional plus several
+// flags). The strict parser in args.ts errors on positionals — we have
+// to walk argv directly here. Kept small + local; if a third command
+// ever needs the same shape we'll lift it.
+// ---------------------------------------------------------------------------
+
+interface ShowArgs {
+  field: string | null;
+  branch?: string;
+  author?: string;
+  labels?: string[];
+  reminder: boolean;
+}
+
+function parseShowArgs(argv: string[]): { ok: true; args: ShowArgs } | { ok: false; error: string } {
+  const out: ShowArgs = { field: null, reminder: false };
+  let i = 0;
+  while (i < argv.length) {
+    const token = argv[i];
+    if (token === "--reminder") {
+      out.reminder = true;
+      i += 1;
+      continue;
+    }
+    if (token.startsWith("--")) {
+      const eq = token.indexOf("=");
+      const name = eq === -1 ? token.slice(2) : token.slice(2, eq);
+      const inline = eq === -1 ? null : token.slice(eq + 1);
+      const value = inline ?? argv[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        return { ok: false, error: `--${name}: requires a value` };
+      }
+      switch (name) {
+        case "branch":
+          out.branch = value;
+          break;
+        case "author":
+          out.author = value;
+          break;
+        case "labels":
+          out.labels = value.split(",").map((l) => l.trim()).filter((l) => l.length > 0);
+          break;
+        default:
+          return { ok: false, error: `unknown flag: --${name}` };
+      }
+      i += inline === null ? 2 : 1;
+      continue;
+    }
+    // Positional: the field name. Only one allowed.
+    if (out.field !== null) {
+      return { ok: false, error: `unexpected extra positional: "${token}" (already have "${out.field}")` };
+    }
+    out.field = token;
+    i += 1;
+  }
+  return { ok: true, args: out };
+}
+
+// ---------------------------------------------------------------------------
+// Schema lookup (for field descriptions and defaults)
+// ---------------------------------------------------------------------------
+
+interface SchemaDescriptor {
+  description?: string;
+  default?: unknown;
+  type?: string | string[];
+  enum?: string[];
+}
+
+/** Locate the bundled schema/v1.json. Returns null if not found. */
+export function findBundledSchemaPath(): string | null {
+  // tsx dev mode: import.meta.url points at src/show.ts; built mode
+  // points at dist/cli.js. Walk up to find the schema directory in
+  // either layout.
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [
+    resolvePath(here, "..", "schema", "v1.json"),
+    resolvePath(here, "schema", "v1.json"),
+    resolvePath(here, "..", "..", "schema", "v1.json"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+let _schemaCache: Record<string, SchemaDescriptor> | null = null;
+function getSchemaDescriptors(): Record<string, SchemaDescriptor> {
+  if (_schemaCache !== null) return _schemaCache;
+  const path = findBundledSchemaPath();
+  if (path === null) return (_schemaCache = {});
+  try {
+    const schema = JSON.parse(readFileSync(path, "utf8")) as {
+      properties?: Record<string, SchemaDescriptor>;
+    };
+    _schemaCache = schema.properties ?? {};
+  } catch {
+    _schemaCache = {};
+  }
+  return _schemaCache;
+}
+
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
+
+/** True for string values long enough to deserve a dedicated full-text section. */
+function isLongString(value: unknown): value is string {
+  return typeof value === "string" && (value.length > 60 || value.includes("\n"));
+}
+
+/**
+ * Describe a prompt's RESOLVED (post-rule, effective) state for the
+ * overview. Deliberately does NOT preview the text: a truncated prompt is
+ * more misleading than useful. Reports whether the effective value matches
+ * the built-in default, plus its size; the footer tip points at
+ * `skilled-pr show <field>` for the full text.
+ *
+ * Source is a content comparison, not a null check: once `init` inlines
+ * the default into the config, "is this the built-in default?" can only be
+ * answered by comparing against DEFAULT_*. This is the same comparison the
+ * future update command uses to detect pristine-vs-customized prompts.
+ */
+function describeResolvedPrompt(resolved: string, defaultText: string): string {
+  const size = `(${resolved.length} chars)`;
+  return resolved === defaultText ? `built-in default ${size}` : `custom ${size}`;
+}
+
+/**
+ * Describe how a prompt is written in the config FILE: null (tracking the
+ * built-in default), an inlined copy of the built-in default, or a custom
+ * value. Distinguishing "inlined default" from "custom" matters because
+ * `init` writes the default inlined — so a non-null value isn't
+ * automatically a customization.
+ */
+function describeConfiguredPrompt(configured: string | null, defaultText: string): string {
+  if (configured === null) return "null (tracks built-in default)";
+  if (configured === defaultText) return `inlined built-in default (${configured.length} chars)`;
+  return `custom (${configured.length} chars)`;
+}
+
+function printSection(title: string): void {
+  console.log("");
+  console.log(title);
+  console.log("─".repeat(Math.min(title.length, 60)));
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand modes
+// ---------------------------------------------------------------------------
+
+function buildContext(args: ShowArgs): PRContext {
+  // Explicit flags take precedence; otherwise pull from the current
+  // checkout. The order matters because `getCurrentPRContext` shells
+  // out to git, which is wasted work if the user already passed a
+  // --branch.
+  if (args.branch !== undefined || args.author !== undefined || args.labels !== undefined) {
+    return {
+      branch: args.branch ?? "",
+      author: args.author,
+      labels: args.labels,
+    };
+  }
+  return getCurrentPRContext();
+}
+
+function printOverview(config: SkilledPRConfig, context: PRContext, profile: ResolvedProfile): void {
+  printSection("skilled-pr config");
+  console.log(`  ${ICON.info} schemaVersion:   ${config.schemaVersion}`);
+  console.log(`  ${ICON.info} statusName:      ${JSON.stringify(config.statusName)}`);
+  console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(config.requiredSkills)}`);
+  console.log(`  ${ICON.info} failOn:          ${JSON.stringify(config.failOn)}`);
+  console.log(
+    `  ${ICON.info} summaryPrompt:   ${describeConfiguredPrompt(config.summaryPrompt, DEFAULT_SUMMARY_PROMPT)}`,
+  );
+  console.log(
+    `  ${ICON.info} briefingPrompt:  ${describeConfiguredPrompt(config.briefingPrompt, DEFAULT_BRIEFING_PROMPT)}`,
+  );
+  console.log(`  ${ICON.info} rules:           ${config.rules.length} rule(s)`);
+
+  printSection("Resolved profile (for this context)");
+  console.log(`  ${ICON.info} branch:          ${JSON.stringify(context.branch || "(none)")}`);
+  if (context.author !== undefined) {
+    console.log(`  ${ICON.info} author:          ${JSON.stringify(context.author)}`);
+  }
+  if (context.labels !== undefined) {
+    console.log(`  ${ICON.info} labels:          ${JSON.stringify(context.labels)}`);
+  }
+  console.log(
+    `  ${ICON.info} matched rule:    ${profile.matchedRuleName === null ? "(none — top-level defaults apply)" : JSON.stringify(profile.matchedRuleName)}`,
+  );
+  console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(profile.requiredSkills)}`);
+  console.log(`  ${ICON.info} failOn:          ${JSON.stringify(profile.failOn)}`);
+  console.log(
+    `  ${ICON.info} summaryPrompt:   ${describeResolvedPrompt(profile.summaryPrompt, DEFAULT_SUMMARY_PROMPT)}`,
+  );
+  console.log(
+    `  ${ICON.info} briefingPrompt:  ${describeResolvedPrompt(profile.briefingPrompt, DEFAULT_BRIEFING_PROMPT)}`,
+  );
+
+  console.log("");
+  console.log(
+    "Tip: run `skilled-pr show <field>` to print a field's full value " +
+      "(e.g. `skilled-pr show summaryPrompt`).",
+  );
+}
+
+function printReminder(profile: ResolvedProfile): void {
+  if (profile.requiredSkills.length === 0) {
+    printSection("Reminder body");
+    console.log(`  ${ICON.warn} No required skills resolved — nothing would be injected.`);
+    return;
+  }
+  const skill = profile.requiredSkills[0];
+  printSection(`Reminder body (skill: ${skill}, harness: claude)`);
+  // Indent each line by two spaces so it's visually distinct from the
+  // surrounding skilled-pr show output.
+  for (const line of formatReminder(profile, skill, "claude").split("\n")) {
+    console.log(`  ${line}`);
+  }
+}
+
+function printFieldDetail(field: string, config: SkilledPRConfig): number {
+  const descriptors = getSchemaDescriptors();
+  const desc = descriptors[field];
+
+  const overrideMap: Record<
+    string,
+    () => { value: unknown; defaultValue: unknown; resolved?: unknown; sourceLabel?: string }
+  > = {
+    schemaVersion: () => ({
+      value: config.schemaVersion,
+      defaultValue: CURRENT_SCHEMA_VERSION,
+    }),
+    requiredSkills: () => ({
+      value: config.requiredSkills,
+      defaultValue: ["review"],
+    }),
+    statusName: () => ({
+      value: config.statusName,
+      defaultValue: "Skilled PR",
+    }),
+    failOn: () => ({
+      value: config.failOn,
+      defaultValue: "error",
+    }),
+    summaryPrompt: () => ({
+      value: config.summaryPrompt,
+      defaultValue: null,
+      resolved: config.summaryPrompt === null ? DEFAULT_SUMMARY_PROMPT : config.summaryPrompt,
+      // Prompt source is a content comparison, not a null check: init
+      // inlines the default, so a non-null value may still be the pristine
+      // default rather than a customization.
+      sourceLabel: describeConfiguredPrompt(config.summaryPrompt, DEFAULT_SUMMARY_PROMPT),
+    }),
+    briefingPrompt: () => ({
+      value: config.briefingPrompt,
+      defaultValue: null,
+      resolved: config.briefingPrompt === null ? DEFAULT_BRIEFING_PROMPT : config.briefingPrompt,
+      sourceLabel: describeConfiguredPrompt(config.briefingPrompt, DEFAULT_BRIEFING_PROMPT),
+    }),
+    autoReview: () => ({
+      value: config.autoReview,
+      defaultValue: {
+        trigger: "manual",
+        execution: "subagent",
+        parallel: true,
+        sessionBriefing: true,
+        skipPolicy: "agent-decides",
+        askBeforeFiring: false,
+      },
+    }),
+    rules: () => ({
+      value: config.rules,
+      defaultValue: [],
+    }),
+  };
+
+  const lookup = overrideMap[field];
+  if (lookup === undefined) {
+    console.error(`${ICON.fail} unknown config field: "${field}"`);
+    console.error("");
+    console.error("Known fields:");
+    for (const name of Object.keys(overrideMap)) {
+      console.error(`  - ${name}`);
+    }
+    return 1;
+  }
+
+  const { value, defaultValue, resolved, sourceLabel } = lookup();
+  printSection(`Field: ${field}`);
+  if (desc?.type !== undefined) {
+    const t = Array.isArray(desc.type) ? desc.type.join(" | ") : desc.type;
+    console.log(`  ${ICON.info} type:     ${t}`);
+  }
+  if (desc?.enum !== undefined) {
+    console.log(`  ${ICON.info} allowed:  ${JSON.stringify(desc.enum)}`);
+  }
+  console.log(`  ${ICON.info} default:  ${JSON.stringify(defaultValue)}`);
+  // Long strings (prompts) print their full text in a dedicated section
+  // below, not inline — this view exists so the user can read the whole
+  // value without opening source. Keep the `current:` line scalar.
+  if (isLongString(value)) {
+    console.log(`  ${ICON.info} current:  (set; full text below)`);
+  } else {
+    console.log(`  ${ICON.info} current:  ${JSON.stringify(value)}`);
+  }
+  // Prompt fields supply a content-based sourceLabel (null / inlined
+  // default / custom); other fields fall back to a structural override
+  // check against their default.
+  const isOverridden = JSON.stringify(value) !== JSON.stringify(defaultValue);
+  const source = sourceLabel ?? (isOverridden ? "override (set in config)" : "built-in default");
+  console.log(`  ${ICON.info} source:   ${source}`);
+
+  // The effective value is what actually gets used at runtime: the
+  // resolved value if one exists (e.g. a null prompt → built-in default),
+  // otherwise the configured value.
+  const effective = resolved !== undefined ? resolved : value;
+  const activeIsBuiltIn = sourceLabel !== undefined && sourceLabel.includes("built-in default");
+  if (isLongString(effective)) {
+    printSection(`Active value${activeIsBuiltIn ? " (built-in default)" : ""}`);
+    // Print the full text un-indented so it round-trips cleanly: a user
+    // customizing the default can copy this block straight into the
+    // config's `summaryPrompt` / `briefingPrompt` field with no leading
+    // whitespace to strip.
+    console.log(effective as string);
+  } else if (resolved !== undefined && JSON.stringify(resolved) !== JSON.stringify(value)) {
+    console.log(`  ${ICON.info} resolved: ${JSON.stringify(resolved)}  (null → built-in default)`);
+  }
+
+  if (desc?.description !== undefined) {
+    printSection("Description");
+    for (const line of desc.description.split("\n")) {
+      console.log(`  ${line}`);
+    }
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+export async function show(argv: string[]): Promise<void> {
+  const parsed = parseShowArgs(argv);
+  if (!parsed.ok) {
+    console.error(`skilled-pr show: ${parsed.error}`);
+    console.error("");
+    console.error("Usage:");
+    console.error("  skilled-pr show [<field>] [--branch <name>] [--author <name>] [--labels a,b,c] [--reminder]");
+    process.exit(1);
+  }
+  const args = parsed.args;
+
+  let config: SkilledPRConfig | null = null;
+  try {
+    config = await loadConfig();
+  } catch (e) {
+    console.error(`${ICON.fail} ${(e as Error).message}`);
+    process.exit(1);
+  }
+  if (config === null) {
+    console.error(`${ICON.fail} No config found at ${CONFIG_PATH}.`);
+    console.error("");
+    console.error("Run `skilled-pr init` to create one.");
+    process.exit(1);
+  }
+
+  if (args.field !== null) {
+    const exitCode = printFieldDetail(args.field, config);
+    if (exitCode !== 0) process.exit(exitCode);
+    return;
+  }
+
+  const context = buildContext(args);
+  const profile = resolveProfile(config, context);
+  printOverview(config, context, profile);
+
+  if (args.reminder) {
+    printReminder(profile);
+  }
+}

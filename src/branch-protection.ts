@@ -136,11 +136,11 @@ export async function enableGate() {
   // 1. Load config
   const config = await loadConfig();
   if (!config) {
-    console.error("Skilled PR: no .skilledpr.jsonc found. Run `skilled-pr init` first.");
+    console.error("Skilled PR: no .skilledpr/config.jsonc found. Run `skilled-pr init` first.");
     process.exit(1);
   }
   if (config.requiredSkills.length === 0) {
-    console.error("Skilled PR: requiredSkills is empty in .skilledpr.jsonc. Add at least one skill.");
+    console.error("Skilled PR: requiredSkills is empty in .skilledpr/config.jsonc. Add at least one skill.");
     process.exit(1);
   }
 

@@ -39,8 +39,13 @@ switch (command) {
     await enableGate();
     break;
   }
-  default:
-    console.log(`skilled-pr v${pkg.version} - Open review transport for AI-native development
+  case "show": {
+    const { show } = await import("./show");
+    await show(process.argv.slice(3));
+    break;
+  }
+  default: {
+    const help = `skilled-pr v${pkg.version} - Open review transport for AI-native development
 
 Usage:
   skilled-pr init [--for claude|codex|both]
@@ -59,11 +64,32 @@ Usage:
   skilled-pr enable-gate             Add the Skilled PR status checks to your
                                      default branch's protection rules.
                                      Additive; preserves any existing rules.
+  skilled-pr show [<field>]          Inspect the active config and rule
+                  [--branch <name>]  resolution. With no args, prints the
+                  [--author <name>]  config overview + resolved profile for
+                  [--labels <list>]  the current branch. With a field name,
+                  [--reminder]       prints type/default/source for that field.
+                                     With --reminder, also prints the literal
+                                     reminder body the hook would inject.
   skilled-pr hook                    Internal: harness hook entry point.
                                      Reads a hook event on stdin and emits
                                      additionalContext if a required review
                                      skill was just invoked.
 
-Learn more: https://github.com/Demianeen/skilled-pr`);
-    break;
+Learn more: https://github.com/Demianeen/skilled-pr`;
+
+    // No command (or an explicit help ask) → help on stdout, exit 0.
+    // UNKNOWN command → error + help on stderr, exit 1. The distinction
+    // matters in CI: a version-pinned workflow invoking a subcommand this
+    // version doesn't have must fail the step loudly, not print help and
+    // report green. (`npx skilled-pr@0.4.0 ci-resolve` was exactly that
+    // silent-success trap.)
+    if (command === undefined || command === "--help" || command === "-h" || command === "help") {
+      console.log(help);
+      break;
+    }
+    console.error(`skilled-pr: unknown command "${command}"\n`);
+    console.error(help);
+    process.exit(1);
+  }
 }

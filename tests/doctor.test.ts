@@ -5,6 +5,10 @@ import {
   classifyGhAuth,
   classifyGitHubRemote,
   classifySkilledPRConfig,
+  classifySchemaVersion,
+  classifyBundledSchema,
+  classifyRulePatterns,
+  classifyReferencedSkills,
   classifyClaudeHooks,
   classifyCodexVersion,
   classifyCodexHooks,
@@ -12,6 +16,30 @@ import {
   formatCheck,
   formatDoctorReport,
 } from "../src/doctor";
+import { CURRENT_SCHEMA_VERSION, type SkilledPRConfig } from "../src/config";
+
+function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
+  return {
+    schemaVersion: 1,
+    requiredSkills: ["review"],
+    statusName: "Skilled PR",
+    failOn: "error",
+    summaryPrompt: null,
+    briefingPrompt: null,
+    autoReview: {
+      trigger: "manual",
+      execution: "subagent",
+      parallel: true,
+      sessionBriefing: true,
+      skipPolicy: "agent-decides",
+      askBeforeFiring: false,
+    },
+    rules: [],
+    ...overrides,
+  };
+}
+
+const SV = `"schemaVersion": ${CURRENT_SCHEMA_VERSION}`;
 
 // ---------------------------------------------------------------------------
 // classifyNodeVersion
@@ -165,9 +193,9 @@ describe("classifySkilledPRConfig", () => {
     expect(r.fix).toBe("skilled-pr init");
   });
 
-  test("valid config → pass with requiredSkills summary", () => {
+  test("valid v1 config → pass with requiredSkills summary", () => {
     const r = classifySkilledPRConfig(
-      '{ "requiredSkills": ["review", "coderabbit:review"], "summaryPrompt": "x" }',
+      `{ ${SV}, "requiredSkills": ["review", "coderabbit:review"] }`,
     );
     expect(r.status).toBe("pass");
     expect(r.detail).toContain("review");
@@ -175,19 +203,19 @@ describe("classifySkilledPRConfig", () => {
   });
 
   test("empty requiredSkills → warn (hook never fires)", () => {
-    const r = classifySkilledPRConfig('{ "requiredSkills": [], "summaryPrompt": "x" }');
+    const r = classifySkilledPRConfig(`{ ${SV}, "requiredSkills": [] }`);
     expect(r.status).toBe("warn");
     expect(r.detail).toContain("empty");
     expect(r.fix).toContain("at least one skill");
   });
 
-  test("missing summaryPrompt → fail with regenerate hint", () => {
-    // summaryPrompt is required since the artifact comment is rendered by
-    // the skill (no built-in fallback). Doctor should call this out
-    // explicitly so the user knows to re-run `init`.
+  test("missing schemaVersion → fail with migration hint", () => {
+    // Old configs without schemaVersion don't parse. doctor surfaces
+    // that as a fail-with-fix; classifySchemaVersion adds a separate
+    // line for newer/older drift.
     const r = classifySkilledPRConfig('{ "requiredSkills": ["review"] }');
     expect(r.status).toBe("fail");
-    expect(r.detail).toContain("summaryPrompt");
+    expect(r.detail).toContain("schemaVersion");
   });
 
   test("invalid JSON → fail with parse error", () => {
@@ -197,9 +225,170 @@ describe("classifySkilledPRConfig", () => {
   });
 
   test("legacy `sha` field (migration) → fail with migration message", () => {
-    const r = classifySkilledPRConfig('{ "requiredSkills": ["review"], "sha": "head" }');
+    const r = classifySkilledPRConfig(`{ ${SV}, "requiredSkills": ["review"], "sha": "head" }`);
     expect(r.status).toBe("fail");
     expect(r.detail).toContain("sha");
+  });
+
+  test("legacy .skilledpr.jsonc at root → fail with migration hint", () => {
+    // doctor probes both paths and passes a `legacyExists` flag.
+    const r = classifySkilledPRConfig(null, true);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain(".skilledpr.jsonc");
+    expect(r.fix).toContain(".skilledpr/config.jsonc");
+    expect(r.fix).toMatch(/migrator|skilled-pr init/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifySchemaVersion (new in v1)
+// ---------------------------------------------------------------------------
+
+describe("classifySchemaVersion", () => {
+  test("null config → skip (no config to check)", () => {
+    expect(classifySchemaVersion(null).status).toBe("skip");
+  });
+
+  test("schemaVersion matches CURRENT_SCHEMA_VERSION → pass", () => {
+    const r = classifySchemaVersion(baseConfig());
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain(`v${CURRENT_SCHEMA_VERSION}`);
+  });
+
+  test("schemaVersion newer than CLI → fail with upgrade hint", () => {
+    // Cast through any because the type says exactly v1; the
+    // classifier still needs to handle drift defensively.
+    const cfg = { ...baseConfig(), schemaVersion: 2 as any };
+    const r = classifySchemaVersion(cfg);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("CLI only supports");
+    expect(r.fix).toMatch(/upgrade/i);
+  });
+
+  test("schemaVersion older than CLI → warn with migration hint", () => {
+    const cfg = { ...baseConfig(), schemaVersion: 0 as any };
+    const r = classifySchemaVersion(cfg);
+    expect(r.status).toBe("warn");
+    expect(r.fix).toMatch(/skilled-pr-update|skilled-pr init/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyBundledSchema (new in v1)
+// ---------------------------------------------------------------------------
+
+describe("classifyBundledSchema", () => {
+  test("identical content → pass", () => {
+    const r = classifyBundledSchema("{ \"x\": 1 }", "{ \"x\": 1 }");
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("matches");
+  });
+
+  test("repo missing → warn with init hint", () => {
+    const r = classifyBundledSchema(null, "{ \"x\": 1 }");
+    expect(r.status).toBe("warn");
+    expect(r.fix).toContain("skilled-pr init");
+  });
+
+  test("CLI bundle missing → warn (reinstall hint)", () => {
+    const r = classifyBundledSchema("{ \"x\": 1 }", null);
+    expect(r.status).toBe("warn");
+    expect(r.fix).toMatch(/reinstall/i);
+  });
+
+  test("content drift → warn with refresh hint", () => {
+    const r = classifyBundledSchema("{ \"a\": 1 }", "{ \"b\": 2 }");
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("drift");
+    expect(r.fix).toContain("skilled-pr init");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyRulePatterns (new in v1)
+// ---------------------------------------------------------------------------
+
+describe("classifyRulePatterns", () => {
+  test("empty rules → pass", () => {
+    expect(classifyRulePatterns([]).status).toBe("pass");
+  });
+
+  test("valid rules → pass with count", () => {
+    const rules = [
+      { match: [{ branch: "main" }] },
+      { match: [{ branch: "release-*" }, { author: "dependabot[bot]" }] },
+    ];
+    const r = classifyRulePatterns(rules);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("2 rule(s)");
+  });
+
+  test("empty author → fail", () => {
+    const r = classifyRulePatterns([{ match: [{ author: "   " }] }]);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("author");
+  });
+
+  test("empty label entry → fail", () => {
+    const r = classifyRulePatterns([{ match: [{ labels: ["security", ""] }] }]);
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("labels");
+  });
+
+  test("branch with metacharacters (no regex injection) → pass", () => {
+    // The patterns are translated to anchored regex; metachars in the
+    // pattern must be escaped before compilation. Verifying that
+    // edge case here protects against a regression where someone
+    // pipes user input through unchanged.
+    const r = classifyRulePatterns([{ match: [{ branch: "release/v1.0.0" }] }]);
+    expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyReferencedSkills (new in v1)
+// ---------------------------------------------------------------------------
+
+describe("classifyReferencedSkills", () => {
+  test("no skills referenced → skip", () => {
+    const r = classifyReferencedSkills([], [], ["review"], null);
+    expect(r.status).toBe("skip");
+  });
+
+  test("no harness skill dirs → skip", () => {
+    const r = classifyReferencedSkills([], ["review"], null, null);
+    expect(r.status).toBe("skip");
+  });
+
+  test("all skills found in claude dir → pass", () => {
+    const r = classifyReferencedSkills([], ["review"], ["review"], null);
+    expect(r.status).toBe("pass");
+  });
+
+  test("namespaced skill matched by bare name in skill dir → pass", () => {
+    // The Codex/Claude skills dir lists `review` (bare); the config
+    // says `coderabbit:review` (namespaced). The classifier accepts
+    // a match on the bare segment after the colon.
+    const r = classifyReferencedSkills([], ["coderabbit:review"], ["review"], null);
+    expect(r.status).toBe("pass");
+  });
+
+  test("skill not found anywhere → warn with missing list", () => {
+    const r = classifyReferencedSkills([], ["typo-review"], ["review"], ["cso"]);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("typo-review");
+  });
+
+  test("rule.requiredSkills are also checked", () => {
+    const rules = [
+      {
+        match: [{ branch: "release-*" }],
+        requiredSkills: ["nonexistent-skill"],
+      },
+    ];
+    const r = classifyReferencedSkills(rules, ["review"], ["review"], null);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("nonexistent-skill");
   });
 });
 
@@ -566,13 +755,14 @@ describe("classifiers populate `why` for every status branch", () => {
 
   test("classifySkilledPRConfig has why on pass + warn + fail", () => {
     expect(
-      classifySkilledPRConfig('{ "requiredSkills": ["a"], "summaryPrompt": "x" }').why,
+      classifySkilledPRConfig(`{ ${SV}, "requiredSkills": ["a"] }`).why,
     ).toBeDefined();
     expect(
-      classifySkilledPRConfig('{ "requiredSkills": [], "summaryPrompt": "x" }').why,
+      classifySkilledPRConfig(`{ ${SV}, "requiredSkills": [] }`).why,
     ).toBeDefined();
     expect(classifySkilledPRConfig(null).why).toBeDefined();
     expect(classifySkilledPRConfig("{ broken }").why).toBeDefined();
+    expect(classifySkilledPRConfig(null, true).why).toBeDefined();
   });
 
   test("classifyClaudeHooks has why on pass + warn + fail variants", () => {

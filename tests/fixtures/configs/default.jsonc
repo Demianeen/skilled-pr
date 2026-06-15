@@ -1,0 +1,13 @@
+{
+  // Sample v1 config used by tests/hook.bench.ts and tests/perf-budget.test.ts.
+  // Mirrors what `skilled-pr init` writes for a fresh repo: one required
+  // skill, no rules, prompts default to null (resolves to built-ins).
+  "$schema": "../../../schema/v1.json",
+  "schemaVersion": 1,
+  "requiredSkills": ["review"],
+  "statusName": "Skilled PR",
+  "failOn": "error",
+  "summaryPrompt": null,
+  "briefingPrompt": null,
+  "rules": []
+}

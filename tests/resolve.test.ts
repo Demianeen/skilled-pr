@@ -27,11 +27,9 @@ function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
     briefingPrompt: null,
     autoReview: {
       trigger: "manual",
-      execution: "subagent",
-      parallel: true,
-      sessionBriefing: true,
+      execution: "main-agent",
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
-      askBeforeFiring: false,
     },
     rules: [],
     ...overrides,
@@ -178,6 +176,9 @@ describe("resolveProfile", () => {
       failOn: "error",
       summaryPrompt: DEFAULT_SUMMARY_PROMPT,
       briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+      execution: "main-agent",
+      sessionBriefing: false,
+      skipPolicy: "agent-decides",
     });
   });
 
@@ -339,12 +340,17 @@ describe("slugifySkill (re-exported helper)", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatReminder", () => {
+  // Default profile: inline (main-agent) execution. Tests for the
+  // subagent variant override `execution` explicitly below.
   const baseProfile: ResolvedProfile = {
     matchedRuleName: null,
     requiredSkills: ["review"],
     failOn: "error",
     summaryPrompt: "Render markdown.",
     briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+    execution: "main-agent",
+    sessionBriefing: false,
+    skipPolicy: "agent-decides",
   };
 
   test("includes the skill name verbatim", () => {
@@ -408,5 +414,94 @@ describe("formatReminder", () => {
 
   test("tells the model how to encode 'no findings'", () => {
     expect(formatReminder(baseProfile, "review", "claude")).toContain("[]");
+  });
+});
+
+describe("formatReminder — subagent execution mode", () => {
+  const subagentProfile: ResolvedProfile = {
+    matchedRuleName: null,
+    requiredSkills: ["review"],
+    failOn: "error",
+    summaryPrompt: "Render markdown.",
+    briefingPrompt: DEFAULT_BRIEFING_PROMPT,
+    execution: "subagent",
+    sessionBriefing: true,
+    skipPolicy: "agent-decides",
+  };
+
+  test("instructs Claude users to spawn via Claude Code's Task tool", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("autoReview.execution=subagent");
+    expect(r).toContain("Claude Code's Task tool");
+    expect(r).toContain("Use a general-purpose subagent");
+    expect(r).not.toContain("subagent_type:");
+    expect(r).not.toContain("model: opus");
+  });
+
+  test("instructs Codex users to spawn via Codex agent delegation", () => {
+    const r = formatReminder(subagentProfile, "review", "codex");
+    expect(r).toContain("autoReview.execution=subagent");
+    expect(r).toContain("Codex's agent delegation tool");
+    expect(r).not.toContain("Task / Agent tool");
+    expect(r).not.toContain("subagent_type:");
+    expect(r).not.toContain("model: opus");
+  });
+
+  test("includes the briefing template when sessionBriefing=true", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("BRIEFING (background, not conclusions)");
+    expect(r).toContain("{{purpose}}");
+    expect(r).toContain("{{constraints}}");
+    expect(r).toContain("{{decisions}}");
+    expect(r).toContain("{{exclusions}}");
+    expect(r).toContain("Before spawning the subagent, fill each {{slot}}");
+    expect(r.indexOf("Before spawning the subagent")).toBeLessThan(
+      r.indexOf("The subagent's prompt should include"),
+    );
+    expect(r).not.toContain("git diff <base>");
+    // {{skill}} is substituted by the reminder builder before embedding,
+    // so the rendered text should not contain the literal placeholder.
+    expect(r).not.toContain("{{skill}}");
+  });
+
+  test("includes review target guidance instead of asking the subagent to guess the base", () => {
+    const r = formatReminder(subagentProfile, "review", "codex");
+    expect(r).toContain("REVIEW TARGET");
+    expect(r).toContain("base branch, PR number, or compare range is unclear");
+    expect(r).toContain("Do not guess `origin/main` on stacked PRs");
+    expect(r).not.toContain("git diff <base>");
+  });
+
+  test("omits the briefing template when sessionBriefing=false", () => {
+    const profile = { ...subagentProfile, sessionBriefing: false };
+    const r = formatReminder(profile, "review", "claude");
+    expect(r).not.toContain("BRIEFING");
+    expect(r).not.toContain("{{purpose}}");
+  });
+
+  test("still tells the subagent to write findings + summary + run attest", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain(".review/findings-review.json");
+    expect(r).toContain(".review/summary-review.md");
+    expect(r).toContain("skilled-pr attest --skill review");
+  });
+
+  test("embeds the resolved summaryPrompt for the subagent to follow", () => {
+    const profile = {
+      ...subagentProfile,
+      summaryPrompt: "MY_DISTINCT_SUMMARY_INSTRUCTION_42",
+    };
+    const r = formatReminder(profile, "review", "claude");
+    expect(r).toContain("MY_DISTINCT_SUMMARY_INSTRUCTION_42");
+  });
+
+  test("tells the subagent to NOT push from inside the subagent on exit-code-2", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("do NOT push from inside the subagent");
+  });
+
+  test("instructs the orchestrator to trust the subagent's findings file as the record", () => {
+    const r = formatReminder(subagentProfile, "review", "claude");
+    expect(r).toContain("trust the subagent's findings file as the record");
   });
 });

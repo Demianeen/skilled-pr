@@ -48,48 +48,38 @@
     "briefingPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "description": "Slot-fill template used when autoReview.execution is \"subagent\" and autoReview.sessionBriefing is true. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
       "examples": [null]
     },
     "autoReview": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Auto-review behaviour (PR #4). All fields optional with built-in defaults.",
+      "description": "Auto-review behaviour. All fields optional with built-in defaults.",
       "properties": {
         "trigger": {
           "type": "string",
           "enum": ["manual", "on-push"],
           "default": "manual",
-          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = automatic via PR #2's GH Action.",
+          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = local Claude Code hook reminder after a non-dry-run git push. Codex has no Bash hook, so Codex remains manual.",
           "examples": ["manual", "on-push"]
         },
         "execution": {
           "type": "string",
           "enum": ["subagent", "main-agent"],
-          "default": "subagent",
-          "description": "Where the skill runs. \"subagent\" launches an isolated context; \"main-agent\" inlines the review into the orchestrator.",
-          "examples": ["subagent"]
-        },
-        "parallel": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether multiple required skills run in parallel (or serially)."
+          "default": "main-agent",
+          "description": "Where the skill runs. \"main-agent\" keeps the reminder inline in the current conversation; \"subagent\" launches an isolated review context.",
+          "examples": ["main-agent", "subagent"]
         },
         "sessionBriefing": {
           "type": "boolean",
-          "default": true,
-          "description": "Pass session briefing context (purpose, constraints, decisions, exclusions) to the reviewing skill via briefingPrompt."
+          "default": false,
+          "description": "When execution is \"subagent\", pass session briefing context (purpose, constraints, decisions, exclusions) to the reviewing skill via briefingPrompt."
         },
         "skipPolicy": {
           "type": "string",
           "enum": ["agent-decides", "always-fire"],
           "default": "agent-decides",
           "description": "Whether the agent may skip review on trivial diffs (\"agent-decides\") or must always run (\"always-fire\")."
-        },
-        "askBeforeFiring": {
-          "type": "boolean",
-          "default": false,
-          "description": "Ask the user before firing a required skill that wasn't explicitly invoked. Useful when you want manual control over which reviews run."
         }
       }
     },

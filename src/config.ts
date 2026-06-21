@@ -13,24 +13,19 @@ import type { FailOn } from "./findings";
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
 /**
- * Auto-review behaviour. Optional in v1 — every field defaults to a
- * sensible value if missing. PR #4 (auto-review) implements the actual
- * behaviour gated by these flags; in PR #1 the fields just need to parse
- * cleanly and round-trip through `show` so users can see what's enabled.
+ * Auto-review behaviour. Optional in v1 - every field defaults to a
+ * sensible value if missing. The defaults keep review inline and make
+ * subagent orchestration explicit opt-in.
  */
 export interface AutoReviewConfig {
-  /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = automatic via PR #2's GH Action. */
+  /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = local Claude Code hook after git push. */
   trigger: "manual" | "on-push";
   /** Where the skill runs. "subagent" = isolated context; "main-agent" = inline in the orchestrator. */
   execution: "subagent" | "main-agent";
-  /** Whether multiple required skills run in parallel (or serially). */
-  parallel: boolean;
-  /** Pass session briefing context to the skill (purpose/constraints/decisions/exclusions). */
+  /** Pass session briefing context to the skill when execution is "subagent". */
   sessionBriefing: boolean;
   /** Whether the agent decides to skip a review for trivial diffs, or always fires. */
   skipPolicy: "agent-decides" | "always-fire";
-  /** Whether to ask the user before firing a required skill that wasn't explicitly invoked. */
-  askBeforeFiring: boolean;
 }
 
 /**
@@ -86,14 +81,14 @@ export interface SkilledPRConfig {
    */
   summaryPrompt: string | null;
   /**
-   * Session-briefing prompt used by PR #4's auto-review when launching a
-   * subagent. `null` resolves to DEFAULT_BRIEFING_PROMPT. Like
+   * Session-briefing prompt used when auto-review launches a subagent.
+   * `null` resolves to DEFAULT_BRIEFING_PROMPT. Like
    * summaryPrompt, this is the contract that lets one transport serve
    * many domains: the orchestrator fills in slots, the prompt rephrases
    * for the spawned agent.
    */
   briefingPrompt: string | null;
-  /** Auto-review behaviour for PR #4. Optional; defaults baked in here. */
+  /** Auto-review behaviour. Optional; defaults baked in here. */
   autoReview: AutoReviewConfig;
   /** Per-context rule overlays. Evaluated in order; first match wins. */
   rules: Rule[];
@@ -111,7 +106,7 @@ export const DEFAULT_SUMMARY_PROMPT =
   "Keep it scannable. The reviewer should see the count and gate at a glance, then click into individual findings for detail.";
 
 /**
- * Built-in default `briefingPrompt`. Slot-fill template used by PR #4's
+ * Built-in default `briefingPrompt`. Slot-fill template used by the
  * auto-review subagent launcher. Each `{{slot}}` is filled by the
  * orchestrator from the active session context (purpose, constraints,
  * decisions, exclusions). Resolves at runtime when config sets
@@ -128,15 +123,13 @@ export const DEFAULT_BRIEFING_PROMPT =
   "\n" +
   "Treat the context above as background, not as conclusions. The user's stated intent doesn't excuse bugs — review against your skill's own standards. If the brief contradicts what the diff actually does, flag the mismatch as an error-level finding.\n" +
   "\n" +
-  "Now run `git diff <base>..HEAD` and review per your loaded skill's instructions.";
+  "Review only the target branch or diff described by the orchestrating agent. If the target is unclear and your loaded skill cannot infer it, return to the orchestrator for the exact PR, base branch, or compare range before reviewing.";
 
 const DEFAULT_AUTO_REVIEW: AutoReviewConfig = {
   trigger: "manual",
-  execution: "subagent",
-  parallel: true,
-  sessionBriefing: true,
+  execution: "main-agent",
+  sessionBriefing: false,
   skipPolicy: "agent-decides",
-  askBeforeFiring: false,
 };
 
 const DEFAULT_CONFIG_BASE = {
@@ -252,12 +245,6 @@ function validateAutoReview(raw: unknown): AutoReviewConfig {
     }
     out.execution = raw.execution;
   }
-  if ("parallel" in raw) {
-    if (typeof raw.parallel !== "boolean") {
-      throw new Error(`Invalid ${CONFIG_PATH}: autoReview.parallel must be a boolean`);
-    }
-    out.parallel = raw.parallel;
-  }
   if ("sessionBriefing" in raw) {
     if (typeof raw.sessionBriefing !== "boolean") {
       throw new Error(`Invalid ${CONFIG_PATH}: autoReview.sessionBriefing must be a boolean`);
@@ -271,12 +258,6 @@ function validateAutoReview(raw: unknown): AutoReviewConfig {
       );
     }
     out.skipPolicy = raw.skipPolicy;
-  }
-  if ("askBeforeFiring" in raw) {
-    if (typeof raw.askBeforeFiring !== "boolean") {
-      throw new Error(`Invalid ${CONFIG_PATH}: autoReview.askBeforeFiring must be a boolean`);
-    }
-    out.askBeforeFiring = raw.askBeforeFiring;
   }
   return out;
 }
@@ -469,25 +450,23 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show summaryPrompt\`
   "summaryPrompt": null,
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
-  // subagent. null → uses the built-in slot-fill template. Override only
-  // if you want a different way of relaying session context to the
-  // reviewing agent.
+  // Session-briefing prompt used only when autoReview.execution is
+  // "subagent" and autoReview.sessionBriefing is true. null → uses the
+  // built-in slot-fill template. Override only if you want a different
+  // way of relaying session context to the reviewing agent.
   //
   // To see the active value (resolves null → default):
   //   \`skilled-pr show briefingPrompt\`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // Auto-review behaviour. Optional; the active defaults are shown here.
+  // The default keeps review inline; opt into subagent execution only when
+  // the extra orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
-    "execution": "subagent",
-    "parallel": true,
-    "sessionBriefing": true,
-    "skipPolicy": "agent-decides",
-    "askBeforeFiring": false
+    "execution": "main-agent",
+    "sessionBriefing": false,
+    "skipPolicy": "agent-decides"
   },
 
   // Per-context overrides. Each rule's \`match\` array OR's together;

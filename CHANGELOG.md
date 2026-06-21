@@ -65,6 +65,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `autoReview.trigger=on-push` is set in config. Codex is skipped (no
   PostToolUse:Bash equivalent); Codex users continue with manual
   invocation.
+
+- **`autoReview.execution=subagent`.** Opt-in execution mode in v1.
+  The default remains `main-agent`, which keeps the required-skill
+  reminder inline in the current conversation. Projects that want an
+  isolated review context can set `autoReview.execution` to `subagent`;
+  the reminder then asks the orchestrator to spawn one reviewing
+  subagent per required skill using the active harness's delegation
+  tool. The subagent does the review work and runs `attest` itself.
+
+- **`autoReview.sessionBriefing` slot template.** With
+  `autoReview.execution=subagent` and `sessionBriefing=true`, the
+  subagent's prompt includes a briefing template asking the
+  orchestrator to fill `{{purpose}}`, `{{constraints}}`,
+  `{{decisions}}`, `{{exclusions}}` slots from conversation context.
+  Empty slots use `"(none stated)"`. The subagent prompt includes
+  target guidance so a reviewer asks for the exact PR, base branch, or
+  compare range instead of guessing on stacked branches. The default is
+  `false` so basic setups do not ask the orchestrator to summarize
+  session context.
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields
@@ -76,14 +95,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for the current (or a hypothetical) PR context. With a positional
   field name (`show summaryPrompt`), prints type/default/source/value
   for that field plus the description from the JSON schema. With
-  `--reminder`, prints the literal reminder body the hook would
-  inject.
-- **`briefingPrompt`.** Slot-fill template used by the upcoming
-  auto-review feature (PR #4) to relay session context to a reviewing
-  subagent. Defaults to a built-in template; override to customise.
-- **`autoReview` config block.** Optional settings consumed by PR #4
-  (trigger, execution mode, parallelism, skip policy, askBeforeFiring).
-  Parses cleanly in v1 even though enforcement lands later.
+  `--reminder`, prints the literal reminder body the hook would inject
+  for every required skill.
+- **`briefingPrompt`.** Slot-fill template used by opt-in
+  `autoReview.execution=subagent` mode to relay session context to a
+  reviewing subagent. Defaults to a built-in template; override to
+  customise.
+- **`autoReview` config block.** Optional settings for manual vs
+  on-push triggering, inline vs subagent execution, session briefing,
+  and skip policy.
 - **`pnpm bench` / `pnpm bench:check`.** Hook hot-path benchmarks
   plus a p95-under-10ms perf budget test. Inline path measures at
   ~0.005ms mean vs ~222ms for a hypothetical CLI-subprocess design

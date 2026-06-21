@@ -28,11 +28,9 @@ function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
     briefingPrompt: null,
     autoReview: {
       trigger: "manual",
-      execution: "subagent",
-      parallel: true,
-      sessionBriefing: true,
+      execution: "main-agent",
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
-      askBeforeFiring: false,
     },
     rules: [],
     ...overrides,

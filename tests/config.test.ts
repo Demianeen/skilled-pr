@@ -28,11 +28,9 @@ describe("parseConfig", () => {
       briefingPrompt: null,
       autoReview: {
         trigger: "manual",
-        execution: "subagent",
-        parallel: true,
-        sessionBriefing: true,
+        execution: "main-agent",
+        sessionBriefing: false,
         skipPolicy: "agent-decides",
-        askBeforeFiring: false,
       },
       rules: [],
     });
@@ -187,6 +185,11 @@ describe("parseConfig", () => {
     expect(parseConfig(`{ ${SV} }`).briefingPrompt).toBeNull();
   });
 
+  test("built-in briefing prompt does not leave the diff base as a placeholder", () => {
+    expect(DEFAULT_BRIEFING_PROMPT).not.toContain("<base>");
+    expect(DEFAULT_BRIEFING_PROMPT).toContain("base branch, or compare range");
+  });
+
   test("accepts an arbitrary non-empty briefingPrompt", () => {
     expect(parseConfig(`{ ${SV}, "briefingPrompt": "custom brief" }`).briefingPrompt).toBe(
       "custom brief",
@@ -223,23 +226,19 @@ describe("parseConfig", () => {
   test("autoReview defaults are applied when the block is absent", () => {
     expect(parseConfig(`{ ${SV} }`).autoReview).toEqual({
       trigger: "manual",
-      execution: "subagent",
-      parallel: true,
-      sessionBriefing: true,
+      execution: "main-agent",
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
-      askBeforeFiring: false,
     });
   });
 
   test("autoReview overrides merge with defaults", () => {
-    const raw = `{ ${SV}, "autoReview": { "trigger": "on-push", "askBeforeFiring": true } }`;
+    const raw = `{ ${SV}, "autoReview": { "trigger": "on-push", "sessionBriefing": true } }`;
     expect(parseConfig(raw).autoReview).toEqual({
       trigger: "on-push",
-      execution: "subagent",
-      parallel: true,
+      execution: "main-agent",
       sessionBriefing: true,
       skipPolicy: "agent-decides",
-      askBeforeFiring: true,
     });
   });
 
@@ -247,12 +246,6 @@ describe("parseConfig", () => {
     expect(() =>
       parseConfig(`{ ${SV}, "autoReview": { "trigger": "always" } }`),
     ).toThrow(/autoReview\.trigger/);
-  });
-
-  test("rejects non-boolean autoReview.parallel", () => {
-    expect(() =>
-      parseConfig(`{ ${SV}, "autoReview": { "parallel": "yes" } }`),
-    ).toThrow(/autoReview\.parallel/);
   });
 
   test("rejects bogus autoReview.execution", () => {

@@ -31,25 +31,23 @@
   //   `skilled-pr show summaryPrompt`
   "summaryPrompt": null,
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
-  // subagent. null → uses the built-in slot-fill template. Override only
-  // if you want a different way of relaying session context to the
-  // reviewing agent.
+  // Session-briefing prompt used only when autoReview.execution is
+  // "subagent" and autoReview.sessionBriefing is true. null → uses the
+  // built-in slot-fill template. Override only if you want a different
+  // way of relaying session context to the reviewing agent.
   //
   // To see the active value (resolves null → default):
   //   `skilled-pr show briefingPrompt`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // Auto-review behaviour. Optional; the active defaults are shown here.
+  // The default keeps review inline; opt into subagent execution only when
+  // the extra orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
-    "execution": "subagent",
-    "parallel": true,
-    "sessionBriefing": true,
-    "skipPolicy": "agent-decides",
-    "askBeforeFiring": false
+    "execution": "main-agent",
+    "sessionBriefing": false,
+    "skipPolicy": "agent-decides"
   },
 
   // Per-context overrides. Each rule's `match` array OR's together;

@@ -127,6 +127,73 @@ describe("show — overview (no args)", () => {
     expect(stdout).toContain("Reminder body");
     expect(stdout).toContain("skilled-pr attest");
     expect(stdout).toContain(".skilledpr/config.jsonc");
+    expect(stdout).not.toContain("spawn ONE subagent");
+  });
+
+  test("--reminder prints every required skill", async () => {
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "requiredSkills": ["review", "coderabbit:review"],
+  "rules": []
+}
+`,
+    );
+    const { stdout } = await runShow(["--reminder"]);
+    expect(stdout).toContain("Reminder body (skill: review");
+    expect(stdout).toContain("Reminder body (skill: coderabbit:review");
+    expect(stdout).toContain(".review/findings-review.json");
+    expect(stdout).toContain(".review/findings-coderabbit-review.json");
+  });
+
+  test("--reminder uses the detected Codex harness for subagent wording", async () => {
+    mkdirSync(join(tmp, ".codex"), { recursive: true });
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "requiredSkills": ["review"],
+  "autoReview": {
+    "execution": "subagent",
+    "sessionBriefing": false
+  },
+  "rules": []
+}
+`,
+    );
+    const { stdout } = await runShow(["--reminder"]);
+    expect(stdout).toContain("harness: codex");
+    expect(stdout).toContain("Codex's agent delegation tool");
+    expect(stdout).not.toContain("Task / Agent tool");
+    expect(stdout).not.toContain("model: opus");
+    expect(stdout).not.toContain("subagent_type:");
+  });
+
+  test("--reminder prints each detected harness when both Claude and Codex are present", async () => {
+    mkdirSync(join(tmp, ".claude"), { recursive: true });
+    mkdirSync(join(tmp, ".codex"), { recursive: true });
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "requiredSkills": ["review"],
+  "autoReview": {
+    "execution": "subagent",
+    "sessionBriefing": false
+  },
+  "rules": []
+}
+`,
+    );
+    const { stdout } = await runShow(["--reminder"]);
+    expect(stdout).toContain("harness: claude");
+    expect(stdout).toContain("Claude Code's Task tool");
+    expect(stdout).toContain("harness: codex");
+    expect(stdout).toContain("Codex's agent delegation tool");
+    expect(stdout).not.toContain("Task / Agent tool");
+    expect(stdout).not.toContain("model: opus");
+    expect(stdout).not.toContain("subagent_type:");
   });
 
   test("--reminder with no required skills prints a warning instead of the body", async () => {

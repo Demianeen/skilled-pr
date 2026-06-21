@@ -65,6 +65,15 @@ export interface ResolvedProfile {
   failOn: FailOn;
   summaryPrompt: string;
   briefingPrompt: string;
+  /**
+   * autoReview behaviour copied from config (rules don't override autoReview
+   * in v1; the trigger/execution/briefing choices are project-wide). Lifting
+   * them onto the resolved profile lets `formatReminder` pick the right
+   * reminder variant without having to also pass the full config around.
+   */
+  execution: "subagent" | "main-agent";
+  sessionBriefing: boolean;
+  skipPolicy: "agent-decides" | "always-fire";
 }
 
 /**
@@ -167,6 +176,9 @@ export function resolveProfile(config: SkilledPRConfig, context: PRContext): Res
     failOn,
     summaryPrompt,
     briefingPrompt,
+    execution: config.autoReview.execution,
+    sessionBriefing: config.autoReview.sessionBriefing,
+    skipPolicy: config.autoReview.skipPolicy,
   };
 }
 
@@ -190,18 +202,28 @@ export type HarnessName = "claude" | "codex";
  * Build the attestation-instruction system reminder body. Pure: no I/O.
  *
  * Takes the already-resolved profile so callers don't have to think
- * about null-prompt fallback. `harnessName` is accepted for forward
- * compatibility — today's reminder body is identical regardless, but
- * the GH Action runner (PR #2) or per-harness UX tweaks might vary it
- * later. Plumbed now so adding variance later doesn't require updating
- * every call site.
+ * about null-prompt fallback. `harnessName` picks the wording for
+ * harness-specific instructions, while the attestation contract stays
+ * identical across supported tools.
  */
 export function formatReminder(
   profile: ResolvedProfile,
   skillName: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _harnessName: HarnessName,
+  harnessName: HarnessName,
 ): string {
+  if (profile.execution === "subagent") {
+    return formatSubagentReminder(profile, skillName, harnessName);
+  }
+  return formatInlineReminder(profile, skillName);
+}
+
+/**
+ * The classic "do the review yourself" reminder. Tells the agent
+ * currently loading the skill to perform the review, write findings,
+ * write summary, and run attest. Used when
+ * `autoReview.execution=main-agent`.
+ */
+function formatInlineReminder(profile: ResolvedProfile, skillName: string): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
   const summaryPath = `.review/summary-${slug}.md`;
@@ -238,6 +260,117 @@ export function formatReminder(
     "This posts the GitHub status check that gates the PR. Without it, the PR cannot merge.",
   );
   return lines.join("\n");
+}
+
+/**
+ * The subagent-spawn reminder. Tells the orchestrating agent to
+ * delegate the review to an Agent() call rather than doing it inline.
+ * The subagent does the review work + posts the attestation; the
+ * orchestrator only reads back findings + reports to the user.
+ *
+ * Used when `autoReview.execution=subagent`. When `sessionBriefing`
+ * is true, the orchestrator is also asked to fill the briefing
+ * template slots from conversation context before passing the prompt
+ * to the subagent.
+ */
+function formatSubagentReminder(
+  profile: ResolvedProfile,
+  skillName: string,
+  harnessName: HarnessName,
+): string {
+  const slug = slugifySkill(skillName);
+  const findingsPath = `.review/findings-${slug}.json`;
+  const summaryPath = `.review/summary-${slug}.md`;
+  const attestCommand = `skilled-pr attest --skill ${skillName} --findings ${findingsPath} --summary ${summaryPath}`;
+
+  const lines: string[] = [];
+  lines.push(
+    `This repo uses skilled-pr with \`autoReview.execution=subagent\`. The \`${skillName}\` skill is required for merge.`,
+  );
+  lines.push("");
+  for (const line of subagentLaunchLines(harnessName, skillName)) {
+    lines.push(line);
+  }
+  lines.push("");
+  if (profile.sessionBriefing) {
+    lines.push(
+      "Before spawning the subagent, fill each {{slot}} in the briefing below (purpose / constraints / decisions / exclusions) with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\". The skill-name placeholder is already substituted.",
+    );
+    lines.push("");
+  }
+  lines.push("The subagent's prompt should include:");
+  lines.push("");
+  lines.push("```");
+  if (profile.sessionBriefing) {
+    lines.push("BRIEFING (background, not conclusions):");
+    lines.push("");
+    // Substitute {{skill}} here — the orchestrator knows the skill name
+    // (it's the one whose hook just fired). Leaving {{skill}} in the
+    // template would invite the agent to try to fill it from chat
+    // context, which is wrong. The other slots (purpose / constraints /
+    // decisions / exclusions) MUST come from conversation context, so
+    // they stay un-substituted for the orchestrator to fill.
+    const briefingWithSkill = profile.briefingPrompt.replace(/\{\{skill\}\}/g, skillName);
+    for (const line of briefingWithSkill.split("\n")) {
+      lines.push(line);
+    }
+    lines.push("");
+  }
+  lines.push("REVIEW INSTRUCTIONS:");
+  lines.push("");
+  lines.push("REVIEW TARGET:");
+  lines.push("");
+  lines.push(
+    "Review the same checkout and HEAD that triggered this reminder. Use the loaded skill's normal PR/base discovery to choose the diff range.",
+  );
+  lines.push(
+    "If the base branch, PR number, or compare range is unclear, return to the orchestrator and ask for the exact target before reviewing. Do not guess `origin/main` on stacked PRs.",
+  );
+  lines.push("");
+  lines.push(`Load the \`${skillName}\` skill and review this branch per its instructions.`);
+  lines.push("");
+  lines.push(
+    `When done, write your findings to \`${findingsPath}\` as a JSON array. ${findingsSchemaForPrompt()}`,
+  );
+  lines.push("");
+  lines.push(
+    `Then write a markdown summary to \`${summaryPath}\` following these instructions:`,
+  );
+  lines.push("");
+  for (const line of profile.summaryPrompt.split("\n")) {
+    lines.push(`  ${line}`);
+  }
+  lines.push("");
+  lines.push(`Finally, run: \`${attestCommand}\``);
+  lines.push("");
+  lines.push(
+    "If attest exits with code 2 (HEAD not pushed), do NOT push from inside the subagent — return to the orchestrator with a message explaining the situation.",
+  );
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "After the subagent returns, briefly confirm to the user whether the gate posted successfully. Don't re-do the review work in this conversation; trust the subagent's findings file as the record.",
+  );
+  return lines.join("\n");
+}
+
+function subagentLaunchLines(harnessName: HarnessName, skillName: string): string[] {
+  switch (harnessName) {
+    case "codex":
+      return [
+        `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using Codex's agent delegation tool.`,
+        "",
+        "Use the default agent type unless this session exposes a dedicated review agent. Do not force a model override unless the tool requires one.",
+        "Pass the prompt below as the subagent prompt.",
+      ];
+    case "claude":
+      return [
+        `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using Claude Code's Task tool.`,
+        "",
+        "Use a general-purpose subagent. Do not hard-code a model unless your installed Task tool requires one.",
+        "Pass the prompt below as the subagent prompt.",
+      ];
+  }
 }
 
 /**

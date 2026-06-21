@@ -20,9 +20,9 @@
 //        skilled-pr show --reminder
 //        skilled-pr show --reminder --branch release-1.0
 //      In addition to the overview, prints the literal reminder text
-//      that would be injected for the FIRST required skill in the
-//      resolved profile. Useful for "what does the model actually
-//      see?" debugging.
+//      that would be injected for every required skill in the resolved
+//      profile. Useful for "what does the model actually see?"
+//      debugging.
 //
 // Implementation deliberately reuses resolveProfile + formatReminder so
 // the output here is byte-identical to what the hook produces.
@@ -45,6 +45,7 @@ import {
   type PRContext,
   type ResolvedProfile,
 } from "./resolve";
+import { detectHarnesses, type HarnessName } from "./harness";
 
 // ---------------------------------------------------------------------------
 // Output icons (matches doctor's convention: ✓ · ⚠ ✗)
@@ -213,6 +214,13 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
     `  ${ICON.info} briefingPrompt:  ${config.briefingPrompt === null ? "null (built-in default)" : compact(config.briefingPrompt)}`,
   );
   console.log(`  ${ICON.info} rules:           ${config.rules.length} rule(s)`);
+  console.log(
+    `  ${ICON.info} autoReview:      ` +
+      `trigger=${config.autoReview.trigger}, ` +
+      `execution=${config.autoReview.execution}, ` +
+      `sessionBriefing=${config.autoReview.sessionBriefing}, ` +
+      `skipPolicy=${config.autoReview.skipPolicy}`,
+  );
 
   printSection("Resolved profile (for this context)");
   console.log(`  ${ICON.info} branch:          ${JSON.stringify(context.branch || "(none)")}`);
@@ -227,6 +235,9 @@ function printOverview(config: SkilledPRConfig, context: PRContext, profile: Res
   );
   console.log(`  ${ICON.info} requiredSkills:  ${JSON.stringify(profile.requiredSkills)}`);
   console.log(`  ${ICON.info} failOn:          ${JSON.stringify(profile.failOn)}`);
+  console.log(`  ${ICON.info} execution:       ${JSON.stringify(profile.execution)}`);
+  console.log(`  ${ICON.info} sessionBriefing: ${profile.sessionBriefing}`);
+  console.log(`  ${ICON.info} skipPolicy:      ${JSON.stringify(profile.skipPolicy)}`);
   console.log(
     `  ${ICON.info} summaryPrompt:   ${compact(profile.summaryPrompt)} ${config.summaryPrompt === null ? "(default)" : "(override)"}`,
   );
@@ -241,12 +252,17 @@ function printReminder(profile: ResolvedProfile): void {
     console.log(`  ${ICON.warn} No required skills resolved — nothing would be injected.`);
     return;
   }
-  const skill = profile.requiredSkills[0];
-  printSection(`Reminder body (skill: ${skill}, harness: claude)`);
-  // Indent each line by two spaces so it's visually distinct from the
-  // surrounding skilled-pr show output.
-  for (const line of formatReminder(profile, skill, "claude").split("\n")) {
-    console.log(`  ${line}`);
+  const harnessNames: HarnessName[] = detectHarnesses().map((h) => h.name);
+  if (harnessNames.length === 0) harnessNames.push("claude");
+  for (const skill of profile.requiredSkills) {
+    for (const harnessName of harnessNames) {
+      printSection(`Reminder body (skill: ${skill}, harness: ${harnessName})`);
+      // Indent each line by two spaces so it's visually distinct from the
+      // surrounding skilled-pr show output.
+      for (const line of formatReminder(profile, skill, harnessName).split("\n")) {
+        console.log(`  ${line}`);
+      }
+    }
   }
 }
 
@@ -285,11 +301,9 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
       value: config.autoReview,
       defaultValue: {
         trigger: "manual",
-        execution: "subagent",
-        parallel: true,
-        sessionBriefing: true,
+        execution: "main-agent",
+        sessionBriefing: false,
         skipPolicy: "agent-decides",
-        askBeforeFiring: false,
       },
     }),
     rules: () => ({

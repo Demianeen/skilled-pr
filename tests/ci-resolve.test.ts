@@ -82,6 +82,9 @@ describe("formatResolution", () => {
     failOn: "error",
     summaryPrompt: "...",
     briefingPrompt: "...",
+    execution: "main-agent",
+    sessionBriefing: false,
+    skipPolicy: "agent-decides",
   };
 
   test("renders PR number, branch, author, labels", () => {

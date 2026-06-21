@@ -73,11 +73,11 @@ In the repo you want to gate:
 
 ```bash
 skilled-pr init           # writes .skilledpr/config.jsonc + .claude/settings.json hooks
-skilled-pr enable-gate    # adds the Skilled PR status check to branch protection
+skilled-pr enable-gate    # adds status checks + writes the bypass workflow
 skilled-pr doctor         # verifies everything is wired up correctly
 ```
 
-That's the entire setup. Three commands. No CI workflow files to write, no secrets to manage.
+That's the entire setup. Three commands. `enable-gate` writes one GitHub Actions workflow at `.github/workflows/skilled-pr-bypass.yml`; commit and push it to the default branch so rule and bypass statuses can run on PRs. No secrets to manage.
 
 ## Configuration
 

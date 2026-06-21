@@ -279,6 +279,12 @@ describe("enableGate", () => {
     return import("../src/branch-protection");
   }
 
+  function loggedOutput(): string {
+    return (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => call.map(String).join(" "))
+      .join("\n");
+  }
+
   test("writes the bypass workflow after creating branch protection", async () => {
     const runMock = mockRunWithExistingContexts(null);
     const { enableGate } = await loadEnableGate(runMock);
@@ -289,6 +295,9 @@ describe("enableGate", () => {
     const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
     expect(content).toContain("skilled-pr ci-resolve");
     expect(runMock.mock.calls.some(([args]) => args.includes("PUT"))).toBe(true);
+    expect(loggedOutput()).toContain(
+      `commit and push ${BYPASS_WORKFLOW_PATH} to your default branch`,
+    );
   });
 
   test("writes the bypass workflow when required checks were already configured", async () => {
@@ -301,5 +310,8 @@ describe("enableGate", () => {
     const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
     expect(content).toContain("skilled-pr ci-resolve");
     expect(runMock.mock.calls.some(([args]) => args.includes("POST"))).toBe(false);
+    expect(loggedOutput()).toContain(
+      `commit and push ${BYPASS_WORKFLOW_PATH} to your default branch`,
+    );
   });
 });

@@ -32,6 +32,9 @@ import {
 } from "./github";
 
 export const BYPASS_WORKFLOW_PATH = ".github/workflows/skilled-pr-bypass.yml";
+const BYPASS_WORKFLOW_NEXT_STEP =
+  `Next: commit and push ${BYPASS_WORKFLOW_PATH} to your default branch ` +
+  `so rule and bypass statuses can run on PRs.`;
 
 // ---------------------------------------------------------------------------
 // Pure helpers (testable, no I/O)
@@ -317,9 +320,11 @@ function writeBypassWorkflowWithLog(): void {
   switch (result) {
     case "created":
       console.log(`Skilled PR: ✓ wrote ${BYPASS_WORKFLOW_PATH}.`);
+      console.log(`Skilled PR: ${BYPASS_WORKFLOW_NEXT_STEP}`);
       break;
     case "updated":
       console.log(`Skilled PR: ✓ refreshed ${BYPASS_WORKFLOW_PATH} (pinned to current version).`);
+      console.log(`Skilled PR: ${BYPASS_WORKFLOW_NEXT_STEP}`);
       break;
     case "skipped":
       console.log(`Skilled PR: ${BYPASS_WORKFLOW_PATH} already up to date.`);

@@ -107,10 +107,12 @@ export function parseCIResolveArgs(argv: ReadonlyArray<string>): CIResolveArgs |
 // PR context fetch
 // ---------------------------------------------------------------------------
 
+export type FetchPRContextResult =
+  | { ok: true; context: PRContext }
+  | { ok: false; message: string };
+
 /**
- * Fetch PR metadata via `gh api`. Returns null on any failure (network,
- * 404, malformed response). The caller decides whether to bail or
- * proceed with a partial context.
+ * Fetch PR metadata via `gh api`.
  *
  * Note: when running inside a GitHub Actions workflow the
  * `GITHUB_EVENT_PATH` env var points at a JSON file with the full event
@@ -119,15 +121,26 @@ export function parseCIResolveArgs(argv: ReadonlyArray<string>): CIResolveArgs |
  * local environments without branching, which keeps the code path
  * uniform.
  */
-export function fetchPRContext(prNumber: number): PRContext | null {
+export function fetchPRContextResult(prNumber: number): FetchPRContextResult {
   const remote = getRemote();
-  if (!remote) return null;
+  if (!remote) {
+    return {
+      ok: false,
+      message: "Skilled PR: no GitHub remote configured for `origin`.",
+    };
+  }
   const result = run([
     "gh",
     "api",
     `repos/${remote.owner}/${remote.repo}/pulls/${prNumber}`,
   ]);
-  if (result.exitCode !== 0) return null;
+  if (result.exitCode !== 0) {
+    const classified = classifyGhError(result.stderr, { operation: "fetch-pulls", remote });
+    return {
+      ok: false,
+      message: `Skilled PR: could not fetch PR #${prNumber} via gh.\n\n${classified.message}`,
+    };
+  }
   try {
     const pr = JSON.parse(result.stdout) as {
       head?: { ref?: string; sha?: string };
@@ -140,16 +153,32 @@ export function fetchPRContext(prNumber: number): PRContext | null {
     const labels = (pr.labels ?? [])
       .map((l) => l.name)
       .filter((n): n is string => typeof n === "string" && n.length > 0);
-    if (typeof branch !== "string" || branch.length === 0) return null;
+    if (typeof branch !== "string" || branch.length === 0) {
+      return {
+        ok: false,
+        message: `Skilled PR: PR #${prNumber} response did not include a head branch.`,
+      };
+    }
     return {
-      branch,
-      sha,
-      author,
-      labels,
+      ok: true,
+      context: {
+        branch,
+        sha,
+        author,
+        labels,
+      },
     };
   } catch {
-    return null;
+    return {
+      ok: false,
+      message: `Skilled PR: gh returned malformed PR JSON for #${prNumber}.`,
+    };
   }
+}
+
+export function fetchPRContext(prNumber: number): PRContext | null {
+  const result = fetchPRContextResult(prNumber);
+  return result.ok ? result.context : null;
 }
 
 function getRemote() {
@@ -216,6 +245,10 @@ export function isFinalAttestationStatus(status: ExistingStatus | undefined): bo
   if (!status) return false;
   if (status.state !== "success" && status.state !== "failure") return false;
   return !isCIResolveDescription(status.description);
+}
+
+function statusAlreadyMatches(status: ExistingStatus | undefined, post: StatusPost): boolean {
+  return status?.state === post.state && status.description === post.description;
 }
 
 /**
@@ -361,11 +394,12 @@ export async function ciResolve(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const context = fetchPRContext(parsed.prNumber);
-  if (!context) {
-    console.error(`Skilled PR: could not fetch PR #${parsed.prNumber} via gh. Check authentication and PR number.`);
+  const contextResult = fetchPRContextResult(parsed.prNumber);
+  if (!contextResult.ok) {
+    console.error(contextResult.message);
     process.exit(1);
   }
+  const context = contextResult.context;
 
   const profile = resolveProfile(config, context);
 
@@ -409,10 +443,15 @@ export async function ciResolve(argv: string[]): Promise<void> {
   let pendingPosted = 0;
   let notRequiredPosted = 0;
   let attested = 0;
+  let upToDate = 0;
   for (const post of posts) {
     const existing = existingByContext.get(post.context);
     if (isFinalAttestationStatus(existing)) {
       attested++;
+      continue;
+    }
+    if (statusAlreadyMatches(existing, post)) {
+      upToDate++;
       continue;
     }
     if (postStatus(remote, context.sha, post.context, post.state, post.description)) {
@@ -425,9 +464,21 @@ export async function ciResolve(argv: string[]): Promise<void> {
   if (pendingPosted > 0) parts.push(`${pendingPosted} pending CTA(s)`);
   if (notRequiredPosted > 0) parts.push(`${notRequiredPosted} not-required success(es)`);
   if (parts.length === 0) {
-    console.log(`Skilled PR: all ${posts.length} context(s) already attested on ${sha7}.`);
+    if (attested === posts.length) {
+      console.log(`Skilled PR: all ${posts.length} context(s) already attested on ${sha7}.`);
+    } else if (upToDate === posts.length) {
+      console.log(`Skilled PR: all ${posts.length} context(s) already up to date on ${sha7}.`);
+    } else {
+      console.log(
+        `Skilled PR: no status changes needed on ${sha7} ` +
+          `(${attested} attested, ${upToDate} up to date).`,
+      );
+    }
     return;
   }
-  const suffix = attested > 0 ? `; left ${attested} existing attestation(s) untouched` : "";
+  const suffixParts: string[] = [];
+  if (attested > 0) suffixParts.push(`left ${attested} existing attestation(s) untouched`);
+  if (upToDate > 0) suffixParts.push(`skipped ${upToDate} up-to-date status(es)`);
+  const suffix = suffixParts.length > 0 ? `; ${suffixParts.join("; ")}` : "";
   console.log(`Skilled PR: posted ${parts.join(" + ")} on ${sha7}${suffix}.`);
 }

@@ -324,6 +324,78 @@ describe("ciResolve --post", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  test("does not repost an identical ci-resolve pending status", async () => {
+    const previousCwd = process.cwd();
+    const tmp = withConfigCwd();
+    const runMock = mockPostFlow([
+      {
+        context: "Skilled PR / review",
+        state: "pending",
+        description: "Invoke /review in Claude Code or Codex to complete this gate.",
+      },
+    ]);
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((msg) => {
+      logged.push(String(msg));
+      return undefined as unknown as void;
+    });
+    process.chdir(tmp);
+    try {
+      const { ciResolve } = await loadMockedCIResolve(runMock);
+
+      await ciResolve(["--pr", "1", "--post"]);
+
+      const postCalls = runMock.mock.calls.filter(
+        ([args]) => args[2] === "repos/Demianeen/skilled-pr/statuses/abc123",
+      );
+      expect(postCalls).toHaveLength(0);
+      expect(logged.join("\n")).toContain("already up to date");
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("prints classified gh errors when PR metadata fetch fails", async () => {
+    const previousCwd = process.cwd();
+    const tmp = withConfigCwd();
+    const runMock = vi.fn((args: string[]): RunResult => {
+      if (args[0] === "git" && args[1] === "remote" && args[2] === "get-url") {
+        return ok("git@github.com:Demianeen/skilled-pr.git\n");
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/pulls/1"
+      ) {
+        return { stdout: "", stderr: "gh: Unauthorized (HTTP 401)", exitCode: 1 };
+      }
+      throw new Error(`unexpected command: ${JSON.stringify(args)}`);
+    });
+    const errored: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((msg) => {
+      errored.push(String(msg));
+      return undefined as unknown as void;
+    });
+    vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("__exit__");
+    }) as never);
+    process.chdir(tmp);
+    try {
+      const { ciResolve } = await loadMockedCIResolve(runMock);
+
+      await expect(ciResolve(["--pr", "1"])).rejects.toThrow(/__exit__/);
+
+      const output = errored.join("\n");
+      expect(output).toContain("could not fetch PR #1");
+      expect(output).toContain("gh is not authenticated");
+      expect(output).toContain("gh auth login");
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

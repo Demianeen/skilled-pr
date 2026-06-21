@@ -5,11 +5,12 @@
 // Skilled PR status checks as required. One command replaces five clicks.
 //
 // Strategy:
-//   1. Read `.skilledpr.jsonc` for requiredSkills + statusName
-//   2. Build the expected contexts list (e.g. `Skilled PR / review`)
+//   1. Read `.skilledpr/config.jsonc` for statusName, defaults, and rules
+//   2. Build the union of contexts any PR could require (e.g. `Skilled PR / review`)
 //   3. GET the existing protection on the default branch
 //      - If 404 (no protection) → PUT a minimal protection with our contexts
 //      - If exists → POST only the MISSING contexts (additive, non-destructive)
+//   4. Write the bundled bypass workflow, which keeps rule-based bypasses live
 //
 // The additive path is critical: users may have already set up PR-review
 // requirements, admin enforcement, push restrictions, etc. We must not
@@ -256,6 +257,7 @@ export async function enableGate() {
     console.log(
       `Skilled PR: ✓ created branch protection on ${branch} with ${expected.length} required check(s).`,
     );
+    writeBypassWorkflowWithLog();
     return;
   }
 
@@ -266,6 +268,7 @@ export async function enableGate() {
     console.log(
       `Skilled PR: ✓ all required checks already configured (${present.length}/${expected.length} present).`,
     );
+    writeBypassWorkflowWithLog();
     return;
   }
 

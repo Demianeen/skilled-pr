@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import {
   writeBypassWorkflow,
   BYPASS_WORKFLOW_PATH,
 } from "../src/branch-protection";
+import type { RunResult } from "../src/proc";
 
 // ---------------------------------------------------------------------------
 // buildRequiredContexts
@@ -186,5 +187,119 @@ describe("writeBypassWorkflow", () => {
     expect(result).toBe("updated");
     const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
     expect(content).toContain("ci-resolve");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enableGate
+// ---------------------------------------------------------------------------
+
+describe("enableGate", () => {
+  let tmp: string;
+  let prevCwd: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-enable-gate-"));
+    prevCwd = process.cwd();
+    process.chdir(tmp);
+    mkdirSync(join(tmp, ".skilledpr"), { recursive: true });
+    writeFileSync(
+      join(tmp, ".skilledpr", "config.jsonc"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          requiredSkills: ["review"],
+          statusName: "Skilled PR",
+          failOn: "error",
+          summaryPrompt: null,
+          briefingPrompt: null,
+          rules: [],
+        },
+        null,
+        2,
+      ),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.doUnmock("../src/proc");
+    vi.resetModules();
+    process.chdir(prevCwd);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function ok(stdout = ""): RunResult {
+    return { stdout, stderr: "", exitCode: 0 };
+  }
+
+  function fail(stderr = "not found"): RunResult {
+    return { stdout: "", stderr, exitCode: 1 };
+  }
+
+  function mockRunWithExistingContexts(contexts: string[] | null) {
+    return vi.fn((args: string[], stdin?: string): RunResult => {
+      void stdin;
+      if (args[0] === "git" && args[1] === "remote" && args[2] === "get-url") {
+        return ok("git@github.com:Demianeen/skilled-pr.git\n");
+      }
+      if (args[0] === "gh" && args[1] === "repo" && args[2] === "view") {
+        return ok("main\n");
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/branches/main/protection/required_status_checks"
+      ) {
+        return contexts === null ? fail() : ok(JSON.stringify({ contexts }));
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/branches/main/protection"
+      ) {
+        return ok();
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/branches/main/protection/required_status_checks/contexts"
+      ) {
+        return ok();
+      }
+      throw new Error(`unexpected command: ${JSON.stringify(args)}`);
+    });
+  }
+
+  async function loadEnableGate(runMock: ReturnType<typeof mockRunWithExistingContexts>) {
+    vi.resetModules();
+    vi.doMock("../src/proc", () => ({ run: runMock }));
+    return import("../src/branch-protection");
+  }
+
+  test("writes the bypass workflow after creating branch protection", async () => {
+    const runMock = mockRunWithExistingContexts(null);
+    const { enableGate } = await loadEnableGate(runMock);
+
+    await enableGate();
+
+    expect(existsSync(BYPASS_WORKFLOW_PATH)).toBe(true);
+    const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    expect(content).toContain("skilled-pr ci-resolve");
+    expect(runMock.mock.calls.some(([args]) => args.includes("PUT"))).toBe(true);
+  });
+
+  test("writes the bypass workflow when required checks were already configured", async () => {
+    const runMock = mockRunWithExistingContexts(["Skilled PR / review"]);
+    const { enableGate } = await loadEnableGate(runMock);
+
+    await enableGate();
+
+    expect(existsSync(BYPASS_WORKFLOW_PATH)).toBe(true);
+    const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    expect(content).toContain("skilled-pr ci-resolve");
+    expect(runMock.mock.calls.some(([args]) => args.includes("POST"))).toBe(false);
   });
 });

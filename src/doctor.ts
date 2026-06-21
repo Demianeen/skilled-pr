@@ -503,6 +503,9 @@ export function classifyReferencedSkills(
 const WHY_HOOKS =
   "PostToolUse matcher 'Skill' catches when Claude autonomously invokes a review skill (the most common path in agentic workflows). UserPromptExpansion catches when you type /skillname directly — that goes through a different event entirely. Without both, the slash-command path silently bypasses attestation and PRs can ship without review.";
 
+const WHY_ON_PUSH_BASH_HOOK =
+  "`autoReview.trigger=on-push` depends on Claude Code's PostToolUse:Bash hook. Existing installs may already have the normal PostToolUse:Skill hook, but that does not fire after `git push`; users must re-run init after enabling on-push so the Bash matcher is installed too.";
+
 /**
  * Classify whether .claude/settings.json has skilled-pr's hooks installed.
  * Looks for the canonical "skilled-pr hook" command under both PostToolUse
@@ -591,6 +594,59 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
     detail: `missing: ${missing} (slash-command path won't trigger attestation)`,
     fix: "skilled-pr init  (idempotent, will add the missing hook)",
     why: WHY_HOOKS,
+  };
+}
+
+/**
+ * Classify the optional Claude Bash hook needed by
+ * `autoReview.trigger=on-push`. Only call this when the parsed config's
+ * trigger is already `on-push`; manual projects should not see this check.
+ */
+export function classifyOnPushBashHook(rawContent: string | null): CheckResult {
+  if (rawContent === null) {
+    return {
+      name: "on-push Bash hook",
+      status: "warn",
+      detail: "autoReview.trigger=on-push but .claude/settings.json not found",
+      fix: "skilled-pr init --for claude",
+      why: WHY_ON_PUSH_BASH_HOOK,
+    };
+  }
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(rawContent, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      name: "on-push Bash hook",
+      status: "fail",
+      detail: "could not inspect .claude/settings.json for PostToolUse:Bash",
+      fix: "Fix .claude/settings.json syntax or run `skilled-pr init --for claude`",
+      why: WHY_ON_PUSH_BASH_HOOK,
+    };
+  }
+  const settings = parsed as { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>> };
+  const entries = settings.hooks?.PostToolUse;
+  const hasBashHook =
+    Array.isArray(entries) &&
+    entries.some(
+      (e) =>
+        (e.matcher ?? "") === "Bash" &&
+        Array.isArray(e.hooks) &&
+        e.hooks.some((h) => h.command === "skilled-pr hook"),
+    );
+  if (hasBashHook) {
+    return {
+      name: "on-push Bash hook",
+      status: "pass",
+      detail: "PostToolUse:Bash installed",
+      why: WHY_ON_PUSH_BASH_HOOK,
+    };
+  }
+  return {
+    name: "on-push Bash hook",
+    status: "warn",
+    detail: "autoReview.trigger=on-push but PostToolUse:Bash is not installed",
+    fix: "skilled-pr init --for claude  (idempotent, adds the Bash matcher)",
+    why: WHY_ON_PUSH_BASH_HOOK,
   };
 }
 
@@ -1029,9 +1085,13 @@ export async function doctor(args: string[] = []) {
   //    "run init" message first-time users got before Codex existed).
   const claudePresent = existsSync(".claude");
   const codexPresent = existsSync(".codex");
+  const shouldCheckOnPushBashHook = parsedConfig?.autoReview.trigger === "on-push";
   if (claudePresent) {
     const settings = await readFileOrNull(".claude/settings.json");
     results.push(classifyClaudeHooks(settings));
+    if (shouldCheckOnPushBashHook) {
+      results.push(classifyOnPushBashHook(settings));
+    }
   } else if (codexPresent) {
     // Codex-only repo: report Claude as skipped instead of failing.
     results.push({
@@ -1041,10 +1101,16 @@ export async function doctor(args: string[] = []) {
       fix: "If you use Claude Code: skilled-pr init --for claude",
       why: WHY_HOOKS,
     });
+    if (shouldCheckOnPushBashHook) {
+      results.push(classifyOnPushBashHook(null));
+    }
   } else {
     // Neither harness present: back-compat default for first-time users.
     const settings = await readFileOrNull(".claude/settings.json");
     results.push(classifyClaudeHooks(settings));
+    if (shouldCheckOnPushBashHook) {
+      results.push(classifyOnPushBashHook(settings));
+    }
   }
   if (codexPresent) {
     // Run the binary check before the hooks check so failure order matches

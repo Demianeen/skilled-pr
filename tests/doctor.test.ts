@@ -10,6 +10,7 @@ import {
   classifyRulePatterns,
   classifyReferencedSkills,
   classifyClaudeHooks,
+  classifyOnPushBashHook,
   classifyCodexVersion,
   classifyCodexHooks,
   classifyBranchProtection,
@@ -483,6 +484,58 @@ describe("classifyClaudeHooks", () => {
     }`;
     const r = classifyClaudeHooks(settings);
     expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyOnPushBashHook
+// ---------------------------------------------------------------------------
+
+describe("classifyOnPushBashHook", () => {
+  test("null settings → warn with init hint", () => {
+    const r = classifyOnPushBashHook(null);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("on-push");
+    expect(r.fix).toContain("skilled-pr init --for claude");
+  });
+
+  test("invalid JSON → fail", () => {
+    const r = classifyOnPushBashHook("{ not valid }");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("could not inspect");
+  });
+
+  test("normal Skill hooks without Bash → warn", () => {
+    const settings = JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          { matcher: "Skill", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+        UserPromptExpansion: [
+          { matcher: "", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+      },
+    });
+    const r = classifyOnPushBashHook(settings);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("PostToolUse:Bash");
+  });
+
+  test("PostToolUse:Bash installed → pass", () => {
+    const settings = JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          { matcher: "Skill", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+          { matcher: "Bash", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+        UserPromptExpansion: [
+          { matcher: "", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+      },
+    });
+    const r = classifyOnPushBashHook(settings);
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("PostToolUse:Bash");
   });
 });
 

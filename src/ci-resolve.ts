@@ -92,7 +92,10 @@ export function parseCIResolveArgs(argv: ReadonlyArray<string>): CIResolveArgs |
   if (prRaw === undefined) {
     return { ok: false, error: "--pr <number> is required" };
   }
-  const prNumber = Number.parseInt(prRaw, 10);
+  if (!/^[1-9]\d*$/.test(prRaw)) {
+    return { ok: false, error: `--pr must be a positive integer (got "${prRaw}")` };
+  }
+  const prNumber = Number(prRaw);
   if (!Number.isInteger(prNumber) || prNumber <= 0) {
     return { ok: false, error: `--pr must be a positive integer (got "${prRaw}")` };
   }

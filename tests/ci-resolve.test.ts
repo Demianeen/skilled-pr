@@ -52,6 +52,12 @@ describe("parseCIResolveArgs", () => {
     if (!result.ok) expect(result.error).toMatch(/positive integer/);
   });
 
+  test("rejects --pr values with numeric prefixes and trailing junk", () => {
+    const result = parseCIResolveArgs(["--pr", "17abc"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/positive integer/);
+  });
+
   test("rejects --pr with zero or negative", () => {
     expect(parseCIResolveArgs(["--pr", "0"]).ok).toBe(false);
     expect(parseCIResolveArgs(["--pr", "-1"]).ok).toBe(false);

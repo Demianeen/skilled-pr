@@ -23,16 +23,3 @@
 - `/skilled-pr-update` skill auto-refresh of its own file (currently
   step 7 is manual; could detect drift via hash-compare and update in
   place).
-- `skilled-pr migrate` uses lax `argv.includes("--apply")` parsing
-  instead of `parseFlags` from src/args.ts. Surfaced as a warning by
-  /review on PR #16 — silent acceptance of typos like
-  `--aply`. Fix is mechanical (port to the strict parser pattern
-  shared with attest/init); deferred to keep PR #16 scoped to the
-  migrator + skill features.
-- Several smaller polish items from /review on PR #16: duplicate
-  `// 9.` step comment in init.ts, test coverage for the
-  validation-error path in the migrator planner, stdout/stderr
-  interleaving in `migrate --apply`, and a warn-before-overwrite for
-  the bundled `/skilled-pr-update` skill when users have locally
-  edited it. All info-severity; land as a single follow-up commit
-  when convenient.

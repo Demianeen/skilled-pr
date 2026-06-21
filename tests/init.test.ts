@@ -312,6 +312,22 @@ describe("init() v1 file layout", () => {
     expect(readFileSync(".claude/skills/skilled-pr-update/SKILL.md", "utf8")).toBe(first);
   });
 
+  test("warns before replacing an edited /skilled-pr-update skill", async () => {
+    await init(["--install-mode=skip", "--for=claude"]);
+    const skillPath = ".claude/skills/skilled-pr-update/SKILL.md";
+    writeFileSync(skillPath, "local edit\n");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let warningText = "";
+    try {
+      await init(["--install-mode=skip", "--for=claude"]);
+      warningText = warnSpy.mock.calls.flat().join("\n");
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(warningText).toContain("differs from the bundled /skilled-pr-update template");
+    expect(readFileSync(skillPath, "utf8")).toContain("name: skilled-pr-update");
+  });
+
   test("does NOT write a root .skilledpr.jsonc anymore", async () => {
     await init(["--install-mode=skip"]);
     expect(existsSync(".skilledpr.jsonc")).toBe(false);

@@ -227,6 +227,11 @@ function installUpdateSkillForHarness(harness: Harness, templateContent: string)
     console.log(`✓ ${skillPath} already up to date (${harness.label})`);
     return false;
   }
+  if (existing !== null) {
+    console.warn(
+      `⚠ ${skillPath} differs from the bundled /skilled-pr-update template; replacing it with the current template.`,
+    );
+  }
   writeFileWithMkdir(skillPath, templateContent);
   console.log(`✓ ${existing === null ? "Created" : "Updated"} ${skillPath} (${harness.label})`);
   return true;

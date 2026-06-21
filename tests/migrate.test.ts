@@ -62,6 +62,15 @@ describe("planMigration", () => {
     expect(plan.currentSchemaVersion).toBeNull();
   });
 
+  test("points legacy root config users at the v1 config path", async () => {
+    writeFileSync(join(tmp, ".skilledpr.jsonc"), `{"requiredSkills":["review"]}`);
+    const plan = await planMigration();
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0].id).toBe("config-legacy-root");
+    expect(plan.steps[0].detail).toContain(".skilledpr/config.jsonc");
+    expect(() => plan.steps[0].apply()).toThrow(/old config location/);
+  });
+
   test("emits a step when config has parse errors", async () => {
     mkdirSync(join(tmp, ".skilledpr"), { recursive: true });
     writeFileSync(join(tmp, ".skilledpr", "config.jsonc"), `{ this is not valid json`);
@@ -226,7 +235,7 @@ describe("applyPlan", () => {
     expect(calls).toEqual(["A", "B"]);
   });
 
-  test("re-throws if a step fails", () => {
+  test("re-throws failed step with the step title", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
@@ -244,7 +253,7 @@ describe("applyPlan", () => {
             },
           ],
         }),
-      ).toThrow(/boom/);
+      ).toThrow(/bad step: boom/);
     } finally {
       logSpy.mockRestore();
       writeSpy.mockRestore();
@@ -337,6 +346,16 @@ describe("migrate CLI entry", () => {
     writeBundledSchema(tmp);
     await expect(migrate(["--plan", "--apply"])).rejects.toThrow(/__exit__/);
     expect(errored.join("\n")).toContain("pass either --plan or --apply");
+  });
+
+  test("unknown flag exits 1 with a clear error", async () => {
+    await expect(migrate(["--force"])).rejects.toThrow(/__exit__/);
+    expect(errored.join("\n")).toContain("unknown flag: --force");
+  });
+
+  test("flag values exit 1 because migrate flags are booleans", async () => {
+    await expect(migrate(["--plan=true"])).rejects.toThrow(/__exit__/);
+    expect(errored.join("\n")).toContain("--plan does not take a value");
   });
 
   test("no flag defaults to --plan (read-only)", async () => {

@@ -32,6 +32,7 @@ import { CONFIG_PATH, CURRENT_SCHEMA_VERSION, loadConfig } from "./config";
 import { findSchemaSource, writeFileWithMkdir } from "./init";
 
 const BUNDLED_SCHEMA_PATH = ".skilledpr/schema.json";
+const LEGACY_ROOT_CONFIG_PATH = ".skilledpr.jsonc";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +67,42 @@ export interface MigrationPlan {
   readonly steps: MigrationStep[];
 }
 
+type ParsedMigrateArgs =
+  | { ok: true; apply: boolean; planOnly: boolean }
+  | { ok: false; error: string };
+
+function parseMigrateArgs(argv: string[]): ParsedMigrateArgs {
+  let apply = false;
+  let planOnly = false;
+
+  for (const token of argv) {
+    if (!token.startsWith("--")) {
+      return { ok: false, error: `unexpected positional argument: "${token}"` };
+    }
+
+    const eqIdx = token.indexOf("=");
+    if (eqIdx !== -1) {
+      return { ok: false, error: `${token.slice(0, eqIdx)} does not take a value` };
+    }
+
+    if (token === "--apply") {
+      if (apply) return { ok: false, error: "--apply was specified more than once" };
+      apply = true;
+    } else if (token === "--plan") {
+      if (planOnly) return { ok: false, error: "--plan was specified more than once" };
+      planOnly = true;
+    } else {
+      return { ok: false, error: `unknown flag: ${token}` };
+    }
+  }
+
+  if (apply && planOnly) {
+    return { ok: false, error: "pass either --plan or --apply, not both" };
+  }
+
+  return { ok: true, apply, planOnly };
+}
+
 // ---------------------------------------------------------------------------
 // Pure plan construction
 // ---------------------------------------------------------------------------
@@ -95,6 +132,27 @@ export async function planMigration(): Promise<MigrationPlan> {
   // newer than CURRENT, emit a "upgrade CLI" step instead of trying to
   // load.
   if (!existsSync(CONFIG_PATH)) {
+    if (existsSync(LEGACY_ROOT_CONFIG_PATH)) {
+      steps.push({
+        id: "config-legacy-root",
+        title: `${LEGACY_ROOT_CONFIG_PATH} uses the old config location`,
+        detail:
+          `This CLI reads ${CONFIG_PATH}. Run \`skilled-pr init\` to create the v1 layout, ` +
+          `then copy any still-needed settings from ${LEGACY_ROOT_CONFIG_PATH} into ${CONFIG_PATH}.`,
+        apply() {
+          throw new Error(
+            `Cannot auto-apply: ${LEGACY_ROOT_CONFIG_PATH} is the old config location. ` +
+              `Run \`skilled-pr init\`, then copy any still-needed settings into ${CONFIG_PATH}.`,
+          );
+        },
+      });
+      return {
+        currentSchemaVersion: null,
+        cliSchemaVersion: CURRENT_SCHEMA_VERSION,
+        steps,
+      };
+    }
+
     steps.push({
       id: "config-missing",
       title: `${CONFIG_PATH} not found`,
@@ -310,7 +368,8 @@ export function applyPlan(plan: MigrationPlan): void {
       console.log(`         ${result}`);
     } catch (e) {
       console.log("FAILED");
-      throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(`${step.title}: ${message}`);
     }
   }
 }
@@ -320,16 +379,16 @@ export function applyPlan(plan: MigrationPlan): void {
 // ---------------------------------------------------------------------------
 
 export async function migrate(argv: string[]): Promise<void> {
-  const apply = argv.includes("--apply");
-  const planOnly = argv.includes("--plan");
-  if (apply && planOnly) {
-    console.error("skilled-pr migrate: pass either --plan or --apply, not both.");
+  const args = parseMigrateArgs(argv);
+  if (!args.ok) {
+    console.error(`skilled-pr migrate: ${args.error}.`);
     process.exit(1);
+    return;
   }
 
   const plan = await planMigration();
 
-  if (apply) {
+  if (args.apply) {
     // Print the plan first so the user always sees what's about to change.
     // No apply-hint here — we're already applying, so "run --apply" is circular.
     console.log(formatPlan(plan, { showApplyHint: false }));

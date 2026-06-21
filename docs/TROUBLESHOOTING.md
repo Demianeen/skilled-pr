@@ -9,7 +9,7 @@ $ skilled-pr doctor
 ⚠ gh authenticated       not signed in
   Fix: gh auth login
 ✓ GitHub remote          owner/repo
-✗ .skilledpr.jsonc       not found
+✗ .skilledpr/config.jsonc not found
   Fix: skilled-pr init
 ...
 ```
@@ -122,16 +122,17 @@ skilled-pr init  # idempotent — merges with existing settings
 
 ### Path 2: skill name isn't in requiredSkills
 
-The hook only injects the attestation reminder for skills listed in `.skilledpr.jsonc`'s `requiredSkills`. Verify:
+The hook only injects the attestation reminder for skills listed in `.skilledpr/config.jsonc`'s `requiredSkills`. Verify:
 
 ```bash
-cat .skilledpr.jsonc
+cat .skilledpr/config.jsonc
 ```
 
 If you wanted `coderabbit:review` to trigger attestation, add it:
 
 ```jsonc
 {
+  "schemaVersion": 1,
   "requiredSkills": ["coderabbit:review"]
 }
 ```
@@ -166,11 +167,13 @@ Shouldn't happen — every comment carries a `<!-- skilled-pr:fp:<hash> -->` mar
 1. Make sure you're on skilled-pr v0.2.0+ (v0.1.x had a `gh api --paginate` bug that broke dedupe on PRs with >100 comments).
 2. Verify the comment marker is still in place. If a reviewer manually edited a comment and removed the HTML marker, dedupe can't find it.
 
-## "Invalid `.skilledpr.jsonc`"
+## "Invalid `.skilledpr/config.jsonc`"
 
-Three flavors:
+Common flavors:
 
 - **JSONC syntax error**: fix the error or run `skilled-pr init` to regenerate.
+- **Missing or old `schemaVersion`**: invoke `/skilled-pr-update` to inspect the migration path, or run `skilled-pr init` to regenerate.
+- **Legacy `.skilledpr.jsonc` at the repo root**: move it to `.skilledpr/config.jsonc` and add `"schemaVersion": 1`, or regenerate with `skilled-pr init`.
 - **`failOn` not in `error | warning | none`**: typo? Allowed values are exactly those three.
 - **Legacy `sha` field present**: this field was removed in v0.2.0. Delete it from your config. The behaviour it controlled (silent-skip on unpushed HEAD) is now: always fail loudly with exit code 2. For passive-skip semantics in scripts, wrap the call:
 
@@ -190,4 +193,4 @@ nvm install --lts && nvm use --lts
 
 ## Still stuck?
 
-Open an issue: https://github.com/Demianeen/skilled-pr/issues — include the output of `skilled-pr doctor`, your `.skilledpr.jsonc`, and the exact error message.
+Open an issue: https://github.com/Demianeen/skilled-pr/issues — include the output of `skilled-pr doctor`, your `.skilledpr/config.jsonc`, and the exact error message.

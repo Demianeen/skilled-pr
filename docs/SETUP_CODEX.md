@@ -13,7 +13,7 @@ skilled-pr supports both Claude Code and OpenAI Codex. If you've already run `sk
 }
 ```
 
-That's the only difference from a Claude Code install. Everything else (the `.skilledpr.jsonc` config, the `attest` flow, GitHub status posting) is identical.
+That's the only difference from a Claude Code install. Everything else (the `.skilledpr/config.jsonc` config, the `attest` flow, GitHub status posting) is identical.
 
 ### Auto-detection
 
@@ -63,4 +63,4 @@ $ skilled-pr doctor
   Fix: skilled-pr init --for codex
 ```
 
-If `doctor` says hooks are installed but attestations aren't firing, the most common cause is mistaken prompt format: type `/review` (with the leading slash) instead of `review` or `please review`. The other common cause is that the skill isn't listed in `requiredSkills` inside `.skilledpr.jsonc`; the hook only injects reminders for required skills.
+If `doctor` says hooks are installed but attestations aren't firing, the most common cause is mistaken prompt format: type `/review` (with the leading slash) instead of `review` or `please review`. The other common cause is that the skill isn't listed in `requiredSkills` inside `.skilledpr/config.jsonc`; the hook only injects reminders for required skills.

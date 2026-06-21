@@ -21,7 +21,7 @@ If a skill you want isn't here, you can write your own. See [SKILL_AUTHORING.md]
 
 Two questions to ask:
 
-1. **Do you want the gate to block on style?** If yes, pick a skill with "code-quality" posture (most of them). If no, prefer the correctness-only ones (`gstack:cso`) and set `failOn: error` in `.skilledpr.jsonc`.
+1. **Do you want the gate to block on style?** If yes, pick a skill with "code-quality" posture (most of them). If no, prefer the correctness-only ones (`gstack:cso`) and set `failOn: error` in `.skilledpr/config.jsonc`.
 2. **Do you want session-aware review or cold-diff review?** Skills that run inside Claude Code (gstack, vercel-plugin) have your session context — they know WHY each change was made. Skills that call out to cloud services (coderabbit) review the diff in isolation.
 
 ## Combining skills

@@ -13,8 +13,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   per-repo config now lives at `.skilledpr/config.jsonc` instead of
   `.skilledpr.jsonc` at the repo root, and carries a required
   `"schemaVersion": 1` sentinel. Loading the legacy root file
-  hard-errors with a migration hint. PR #2 will ship an automated
-  migrator; until then, run `skilled-pr init` to regenerate.
+  hard-errors with a migration hint. Run `skilled-pr init` to
+  regenerate, or manually move the config to the new path and add
+  `"schemaVersion": 1`.
 
 ### Added
 
@@ -49,12 +50,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for that field plus the description from the JSON schema. With
   `--reminder`, prints the literal reminder body the hook would
   inject.
-- **`briefingPrompt`.** Slot-fill template used by the upcoming
-  auto-review feature (PR #4) to relay session context to a reviewing
-  subagent. Defaults to a built-in template; override to customise.
-- **`autoReview` config block.** Optional settings consumed by PR #4
-  (trigger, execution mode, parallelism, skip policy, askBeforeFiring).
-  Parses cleanly in v1 even though enforcement lands later.
+- **`briefingPrompt`.** Slot-fill template reserved for upcoming
+  auto-review support to relay session context to a reviewing subagent.
+  Defaults to a built-in template; override to customise.
+- **`autoReview` config block.** Optional settings reserved for
+  upcoming auto-review support (trigger, execution mode, parallelism,
+  skip policy, askBeforeFiring). Parses cleanly in v1 even though
+  enforcement lands later.
 - **`pnpm bench` / `pnpm bench:check`.** Hook hot-path benchmarks
   plus a p95-under-10ms perf budget test. Inline path measures at
   ~0.005ms mean vs ~222ms for a hypothetical CLI-subprocess design

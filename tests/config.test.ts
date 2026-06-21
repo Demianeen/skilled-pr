@@ -201,6 +201,10 @@ describe("parseConfig", () => {
     expect(parsed.briefingPrompt).toBe(DEFAULT_BRIEFING_PROMPT);
   });
 
+  test("generateDefaultConfig does not expose stack PR numbers to users", () => {
+    expect(generateDefaultConfig()).not.toContain("PR #");
+  });
+
   test("DEFAULT_SUMMARY_PROMPT is a non-empty string", () => {
     expect(typeof DEFAULT_SUMMARY_PROMPT).toBe("string");
     expect(DEFAULT_SUMMARY_PROMPT.length).toBeGreaterThan(20);

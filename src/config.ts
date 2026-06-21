@@ -512,9 +512,9 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show briefingPrompt\` prints the active text.
   "briefingPrompt": ${promptToJsoncArray(DEFAULT_BRIEFING_PROMPT, "  ")},
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // Auto-review behaviour reserved for future automated review support.
+  // Optional; defaults shown here. All fields are independent; change one
+  // without changing the others.
   "autoReview": {
     "trigger": "manual",
     "execution": "subagent",

@@ -46,7 +46,7 @@ Earlier versions of skilled-pr posted one inline PR comment per finding and requ
 
 One of `"error"`, `"warning"`, `"info"`.
 
-The user's `.skilledpr.jsonc` has a `failOn` field that decides which severities block the PR:
+The user's `.skilledpr/config.jsonc` has a `failOn` field that decides which severities block the PR:
 
 - `failOn: "error"` (default) - `error` blocks, `warning` and `info` are advisory
 - `failOn: "warning"` - `error` and `warning` block, `info` is advisory
@@ -93,13 +93,13 @@ The CLI exits with non-zero status without posting anything.
 
 `skilled-pr attest --skill <name> --findings <findings.json> --summary <summary.md>` posts (or PATCHes in place) one comment per skill on the PR. The comment body comes from the `--summary` file verbatim, with an HTML marker `<!-- skilled-pr:artifact:<skill> -->` auto-appended so future attest runs can find and update the same comment.
 
-**skilled-pr does not render the body itself.** The skill renders the summary, following the `summaryPrompt` from `.skilledpr.jsonc`. This is by design: a typo-check skill should emit a `file:line: 'teh' -> 'the'` table, a French-translation skill should show side-by-side phrase diffs, a security-review skill should embed CVE references. One hardcoded template can't serve all of them; the skill already knows its domain.
+**skilled-pr does not render the body itself.** The skill renders the summary, following the `summaryPrompt` from `.skilledpr/config.jsonc`. This is by design: a typo-check skill should emit a `file:line: 'teh' -> 'the'` table, a French-translation skill should show side-by-side phrase diffs, a security-review skill should embed CVE references. One hardcoded template can't serve all of them; the skill already knows its domain.
 
 The `findings.json` array stays the same shape regardless of summary format - it's the input to the status check (`failOn` gating uses severity counts from this array). Findings are the machine-readable record; the summary is the human-readable record.
 
 ### Default `summaryPrompt`
 
-`init` writes a default prompt that asks for a header + severity breakdown + per-finding `<details>` blocks. Sensible starting point; tune per project. The default lives in `DEFAULT_SUMMARY_PROMPT` in `src/config.ts` (also rendered into the generated `.skilledpr.jsonc` for direct user editing).
+`init` writes a default prompt that asks for a header + severity breakdown + per-finding `<details>` blocks. Sensible starting point; tune per project. The default lives in `DEFAULT_SUMMARY_PROMPT` in `src/config.ts` (also rendered into the generated `.skilledpr/config.jsonc` for direct user editing).
 
 Example output a skill might produce following the default prompt:
 

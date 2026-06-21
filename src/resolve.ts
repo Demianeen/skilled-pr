@@ -202,20 +202,17 @@ export type HarnessName = "claude" | "codex";
  * Build the attestation-instruction system reminder body. Pure: no I/O.
  *
  * Takes the already-resolved profile so callers don't have to think
- * about null-prompt fallback. `harnessName` is accepted for forward
- * compatibility — today's reminder body is identical regardless, but
- * the GH Action runner (PR #2) or per-harness UX tweaks might vary it
- * later. Plumbed now so adding variance later doesn't require updating
- * every call site.
+ * about null-prompt fallback. `harnessName` picks the wording for
+ * harness-specific instructions, while the attestation contract stays
+ * identical across supported tools.
  */
 export function formatReminder(
   profile: ResolvedProfile,
   skillName: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _harnessName: HarnessName,
+  harnessName: HarnessName,
 ): string {
   if (profile.execution === "subagent") {
-    return formatSubagentReminder(profile, skillName);
+    return formatSubagentReminder(profile, skillName, harnessName);
   }
   return formatInlineReminder(profile, skillName);
 }
@@ -276,7 +273,11 @@ function formatInlineReminder(profile: ResolvedProfile, skillName: string): stri
  * template slots from conversation context before passing the prompt
  * to the subagent.
  */
-function formatSubagentReminder(profile: ResolvedProfile, skillName: string): string {
+function formatSubagentReminder(
+  profile: ResolvedProfile,
+  skillName: string,
+  harnessName: HarnessName,
+): string {
   const slug = slugifySkill(skillName);
   const findingsPath = `.review/findings-${slug}.json`;
   const summaryPath = `.review/summary-${slug}.md`;
@@ -287,13 +288,9 @@ function formatSubagentReminder(profile: ResolvedProfile, skillName: string): st
     `This repo uses skilled-pr with \`autoReview.execution=subagent\`. The \`${skillName}\` skill is required for merge.`,
   );
   lines.push("");
-  lines.push(
-    `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using the Task / Agent tool with these parameters:`,
-  );
-  lines.push("");
-  lines.push("  subagent_type: general-purpose");
-  lines.push("  model: opus");
-  lines.push("  prompt: <see below>");
+  for (const line of subagentLaunchLines(harnessName, skillName)) {
+    lines.push(line);
+  }
   lines.push("");
   lines.push("The subagent's prompt should include:");
   lines.push("");
@@ -318,6 +315,15 @@ function formatSubagentReminder(profile: ResolvedProfile, skillName: string): st
     lines.push("");
   }
   lines.push("REVIEW INSTRUCTIONS:");
+  lines.push("");
+  lines.push("REVIEW TARGET:");
+  lines.push("");
+  lines.push(
+    "Review the same checkout and HEAD that triggered this reminder. Use the loaded skill's normal PR/base discovery to choose the diff range.",
+  );
+  lines.push(
+    "If the base branch, PR number, or compare range is unclear, return to the orchestrator and ask for the exact target before reviewing. Do not guess `origin/main` on stacked PRs.",
+  );
   lines.push("");
   lines.push(`Load the \`${skillName}\` skill and review this branch per its instructions.`);
   lines.push("");
@@ -344,6 +350,25 @@ function formatSubagentReminder(profile: ResolvedProfile, skillName: string): st
     "After the subagent returns, briefly confirm to the user whether the gate posted successfully. Don't re-do the review work in this conversation; trust the subagent's findings file as the record.",
   );
   return lines.join("\n");
+}
+
+function subagentLaunchLines(harnessName: HarnessName, skillName: string): string[] {
+  switch (harnessName) {
+    case "codex":
+      return [
+        `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using Codex's agent delegation tool.`,
+        "",
+        "Use the default agent type unless this session exposes a dedicated review agent. Do not force a model override unless the tool requires one.",
+        "Pass the prompt below as the subagent prompt.",
+      ];
+    case "claude":
+      return [
+        `Don't do the review in this conversation. Instead, spawn ONE subagent for the \`${skillName}\` skill using Claude Code's Task tool.`,
+        "",
+        "Use a general-purpose subagent. Do not hard-code a model unless your installed Task tool requires one.",
+        "Pass the prompt below as the subagent prompt.",
+      ];
+  }
 }
 
 /**

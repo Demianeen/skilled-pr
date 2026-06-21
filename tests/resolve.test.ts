@@ -431,12 +431,22 @@ describe("formatReminder — subagent execution mode", () => {
     skipPolicy: "agent-decides",
   };
 
-  test("instructs the orchestrator to spawn a subagent via the Agent/Task tool", () => {
+  test("instructs Claude users to spawn via Claude Code's Task tool", () => {
     const r = formatReminder(subagentProfile, "review", "claude");
     expect(r).toContain("autoReview.execution=subagent");
-    expect(r).toContain("Task / Agent tool");
-    expect(r).toContain("subagent_type: general-purpose");
-    expect(r).toContain("model: opus");
+    expect(r).toContain("Claude Code's Task tool");
+    expect(r).toContain("Use a general-purpose subagent");
+    expect(r).not.toContain("subagent_type:");
+    expect(r).not.toContain("model: opus");
+  });
+
+  test("instructs Codex users to spawn via Codex agent delegation", () => {
+    const r = formatReminder(subagentProfile, "review", "codex");
+    expect(r).toContain("autoReview.execution=subagent");
+    expect(r).toContain("Codex's agent delegation tool");
+    expect(r).not.toContain("Task / Agent tool");
+    expect(r).not.toContain("subagent_type:");
+    expect(r).not.toContain("model: opus");
   });
 
   test("includes the briefing template when sessionBriefing=true", () => {
@@ -447,9 +457,18 @@ describe("formatReminder — subagent execution mode", () => {
     expect(r).toContain("{{decisions}}");
     expect(r).toContain("{{exclusions}}");
     expect(r).toContain("fill each remaining {{slot}}");
+    expect(r).not.toContain("git diff <base>");
     // {{skill}} is substituted by the reminder builder before embedding,
     // so the rendered text should not contain the literal placeholder.
     expect(r).not.toContain("{{skill}}");
+  });
+
+  test("includes review target guidance instead of asking the subagent to guess the base", () => {
+    const r = formatReminder(subagentProfile, "review", "codex");
+    expect(r).toContain("REVIEW TARGET");
+    expect(r).toContain("base branch, PR number, or compare range is unclear");
+    expect(r).toContain("Do not guess `origin/main` on stacked PRs");
+    expect(r).not.toContain("git diff <base>");
   });
 
   test("omits the briefing template when sessionBriefing=false", () => {

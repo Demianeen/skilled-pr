@@ -128,7 +128,7 @@ export const DEFAULT_BRIEFING_PROMPT =
   "\n" +
   "Treat the context above as background, not as conclusions. The user's stated intent doesn't excuse bugs — review against your skill's own standards. If the brief contradicts what the diff actually does, flag the mismatch as an error-level finding.\n" +
   "\n" +
-  "Now run `git diff <base>..HEAD` and review per your loaded skill's instructions.";
+  "Review only the target branch or diff described by the orchestrating agent. If the target is unclear and your loaded skill cannot infer it, return to the orchestrator for the exact PR, base branch, or compare range before reviewing.";
 
 const DEFAULT_AUTO_REVIEW: AutoReviewConfig = {
   trigger: "manual",

@@ -70,17 +70,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   The default remains `main-agent`, which keeps the required-skill
   reminder inline in the current conversation. Projects that want an
   isolated review context can set `autoReview.execution` to `subagent`;
-  the reminder then asks the orchestrator to spawn an `Agent()` (Task
-  tool) call per required skill. The subagent does the review work and
-  runs `attest` itself.
+  the reminder then asks the orchestrator to spawn one reviewing
+  subagent per required skill using the active harness's delegation
+  tool. The subagent does the review work and runs `attest` itself.
 
 - **`autoReview.sessionBriefing` slot template.** With
   `autoReview.execution=subagent` and `sessionBriefing=true`, the
   subagent's prompt includes a briefing template asking the
   orchestrator to fill `{{purpose}}`, `{{constraints}}`,
   `{{decisions}}`, `{{exclusions}}` slots from conversation context.
-  Empty slots use `"(none stated)"`. The default is `false` so basic
-  setups do not ask the orchestrator to summarize session context.
+  Empty slots use `"(none stated)"`. The subagent prompt includes
+  target guidance so a reviewer asks for the exact PR, base branch, or
+  compare range instead of guessing on stacked branches. The default is
+  `false` so basic setups do not ask the orchestrator to summarize
+  session context.
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields

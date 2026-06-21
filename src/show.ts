@@ -45,6 +45,7 @@ import {
   type PRContext,
   type ResolvedProfile,
 } from "./resolve";
+import { detectHarnesses, type HarnessName } from "./harness";
 
 // ---------------------------------------------------------------------------
 // Output icons (matches doctor's convention: ✓ · ⚠ ✗)
@@ -252,11 +253,15 @@ function printReminder(profile: ResolvedProfile): void {
     return;
   }
   const skill = profile.requiredSkills[0];
-  printSection(`Reminder body (skill: ${skill}, harness: claude)`);
-  // Indent each line by two spaces so it's visually distinct from the
-  // surrounding skilled-pr show output.
-  for (const line of formatReminder(profile, skill, "claude").split("\n")) {
-    console.log(`  ${line}`);
+  const harnessNames: HarnessName[] = detectHarnesses().map((h) => h.name);
+  if (harnessNames.length === 0) harnessNames.push("claude");
+  for (const harnessName of harnessNames) {
+    printSection(`Reminder body (skill: ${skill}, harness: ${harnessName})`);
+    // Indent each line by two spaces so it's visually distinct from the
+    // surrounding skilled-pr show output.
+    for (const line of formatReminder(profile, skill, harnessName).split("\n")) {
+      console.log(`  ${line}`);
+    }
   }
 }
 

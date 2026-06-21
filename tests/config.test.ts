@@ -187,6 +187,11 @@ describe("parseConfig", () => {
     expect(parseConfig(`{ ${SV} }`).briefingPrompt).toBeNull();
   });
 
+  test("built-in briefing prompt does not leave the diff base as a placeholder", () => {
+    expect(DEFAULT_BRIEFING_PROMPT).not.toContain("<base>");
+    expect(DEFAULT_BRIEFING_PROMPT).toContain("base branch, or compare range");
+  });
+
   test("accepts an arbitrary non-empty briefingPrompt", () => {
     expect(parseConfig(`{ ${SV}, "briefingPrompt": "custom brief" }`).briefingPrompt).toBe(
       "custom brief",

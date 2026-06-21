@@ -48,7 +48,7 @@
     "briefingPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "description": "Slot-fill template used when autoReview.execution is \"subagent\" and autoReview.sessionBriefing is true. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
       "examples": [null]
     },
     "autoReview": {
@@ -66,9 +66,9 @@
         "execution": {
           "type": "string",
           "enum": ["subagent", "main-agent"],
-          "default": "subagent",
-          "description": "Where the skill runs. \"subagent\" launches an isolated context; \"main-agent\" inlines the review into the orchestrator.",
-          "examples": ["subagent"]
+          "default": "main-agent",
+          "description": "Where the skill runs. \"main-agent\" keeps the reminder inline in the current conversation; \"subagent\" launches an isolated review context.",
+          "examples": ["main-agent", "subagent"]
         },
         "parallel": {
           "type": "boolean",
@@ -77,8 +77,8 @@
         },
         "sessionBriefing": {
           "type": "boolean",
-          "default": true,
-          "description": "Pass session briefing context (purpose, constraints, decisions, exclusions) to the reviewing skill via briefingPrompt."
+          "default": false,
+          "description": "When execution is \"subagent\", pass session briefing context (purpose, constraints, decisions, exclusions) to the reviewing skill via briefingPrompt."
         },
         "skipPolicy": {
           "type": "string",

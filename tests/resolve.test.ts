@@ -27,9 +27,9 @@ function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
     briefingPrompt: null,
     autoReview: {
       trigger: "manual",
-      execution: "subagent",
+      execution: "main-agent",
       parallel: true,
-      sessionBriefing: true,
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
       askBeforeFiring: false,
     },
@@ -178,8 +178,8 @@ describe("resolveProfile", () => {
       failOn: "error",
       summaryPrompt: DEFAULT_SUMMARY_PROMPT,
       briefingPrompt: DEFAULT_BRIEFING_PROMPT,
-      execution: "subagent",
-      sessionBriefing: true,
+      execution: "main-agent",
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
     });
   });
@@ -351,7 +351,7 @@ describe("formatReminder", () => {
     summaryPrompt: "Render markdown.",
     briefingPrompt: DEFAULT_BRIEFING_PROMPT,
     execution: "main-agent",
-    sessionBriefing: true,
+    sessionBriefing: false,
     skipPolicy: "agent-decides",
   };
 

@@ -125,10 +125,9 @@ describe("show — overview (no args)", () => {
     writeConfig(tmp);
     const { stdout } = await runShow(["--reminder", "--branch", "feat/x"]);
     expect(stdout).toContain("Reminder body");
-    // The default config has execution=subagent, so the reminder body
-    // describes the subagent-spawn flow.
     expect(stdout).toContain("skilled-pr attest");
-    expect(stdout).toContain("subagent");
+    expect(stdout).toContain(".skilledpr/config.jsonc");
+    expect(stdout).not.toContain("spawn ONE subagent");
   });
 
   test("--reminder with no required skills prints a warning instead of the body", async () => {

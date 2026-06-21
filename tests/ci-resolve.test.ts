@@ -83,7 +83,7 @@ describe("formatResolution", () => {
     summaryPrompt: "...",
     briefingPrompt: "...",
     execution: "main-agent",
-    sessionBriefing: true,
+    sessionBriefing: false,
     skipPolicy: "agent-decides",
   };
 

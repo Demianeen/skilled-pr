@@ -28,9 +28,9 @@ describe("parseConfig", () => {
       briefingPrompt: null,
       autoReview: {
         trigger: "manual",
-        execution: "subagent",
+        execution: "main-agent",
         parallel: true,
-        sessionBriefing: true,
+        sessionBriefing: false,
         skipPolicy: "agent-decides",
         askBeforeFiring: false,
       },
@@ -223,9 +223,9 @@ describe("parseConfig", () => {
   test("autoReview defaults are applied when the block is absent", () => {
     expect(parseConfig(`{ ${SV} }`).autoReview).toEqual({
       trigger: "manual",
-      execution: "subagent",
+      execution: "main-agent",
       parallel: true,
-      sessionBriefing: true,
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
       askBeforeFiring: false,
     });
@@ -235,9 +235,9 @@ describe("parseConfig", () => {
     const raw = `{ ${SV}, "autoReview": { "trigger": "on-push", "askBeforeFiring": true } }`;
     expect(parseConfig(raw).autoReview).toEqual({
       trigger: "on-push",
-      execution: "subagent",
+      execution: "main-agent",
       parallel: true,
-      sessionBriefing: true,
+      sessionBriefing: false,
       skipPolicy: "agent-decides",
       askBeforeFiring: true,
     });

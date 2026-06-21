@@ -25,7 +25,7 @@ export interface AutoReviewConfig {
   execution: "subagent" | "main-agent";
   /** Whether multiple required skills run in parallel (or serially). */
   parallel: boolean;
-  /** Pass session briefing context to the skill (purpose/constraints/decisions/exclusions). */
+  /** Pass session briefing context to the skill when execution is "subagent". */
   sessionBriefing: boolean;
   /** Whether the agent decides to skip a review for trivial diffs, or always fires. */
   skipPolicy: "agent-decides" | "always-fire";
@@ -132,9 +132,9 @@ export const DEFAULT_BRIEFING_PROMPT =
 
 const DEFAULT_AUTO_REVIEW: AutoReviewConfig = {
   trigger: "manual",
-  execution: "subagent",
+  execution: "main-agent",
   parallel: true,
-  sessionBriefing: true,
+  sessionBriefing: false,
   skipPolicy: "agent-decides",
   askBeforeFiring: false,
 };
@@ -469,23 +469,23 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show summaryPrompt\`
   "summaryPrompt": null,
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
-  // subagent. null → uses the built-in slot-fill template. Override only
-  // if you want a different way of relaying session context to the
-  // reviewing agent.
+  // Session-briefing prompt used only when autoReview.execution is
+  // "subagent" and autoReview.sessionBriefing is true. null → uses the
+  // built-in slot-fill template. Override only if you want a different
+  // way of relaying session context to the reviewing agent.
   //
   // To see the active value (resolves null → default):
   //   \`skilled-pr show briefingPrompt\`
   "briefingPrompt": null,
 
   // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // shown here. The default keeps review inline; opt into subagent
+  // execution only when the extra orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
-    "execution": "subagent",
+    "execution": "main-agent",
     "parallel": true,
-    "sessionBriefing": true,
+    "sessionBriefing": false,
     "skipPolicy": "agent-decides",
     "askBeforeFiring": false
   },

@@ -295,9 +295,9 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
       value: config.autoReview,
       defaultValue: {
         trigger: "manual",
-        execution: "subagent",
+        execution: "main-agent",
         parallel: true,
-        sessionBriefing: true,
+        sessionBriefing: false,
         skipPolicy: "agent-decides",
         askBeforeFiring: false,
       },

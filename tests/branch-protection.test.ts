@@ -170,6 +170,15 @@ describe("writeBypassWorkflow", () => {
     expect(content).toMatch(/skilled-pr@[\w.-]+/);
   });
 
+  test("workflow uses pull_request_target while checking out the trusted base ref", () => {
+    writeBypassWorkflow();
+    const content = readFileSync(BYPASS_WORKFLOW_PATH, "utf8");
+    expect(content).toContain("pull_request_target:");
+    expect(content).toContain("ref: ${{ github.event.pull_request.base.ref }}");
+    expect(content).toContain("--pr ${{ github.event.pull_request.number }}");
+    expect(content).not.toContain("github.event.pull_request.head");
+  });
+
   test("idempotent: second call returns 'skipped'", () => {
     writeBypassWorkflow();
     const second = writeBypassWorkflow();

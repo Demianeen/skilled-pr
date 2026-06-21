@@ -1,7 +1,7 @@
 // skilled-pr ci-resolve
 //
-// Designed to run inside a GitHub Actions workflow that fires on
-// `pull_request` events. Resolves the active rule profile for a specific
+// Designed to run inside the bundled GitHub Actions workflow that fires on
+// PR events. Resolves the active rule profile for a specific
 // PR and (optionally) posts a status to GitHub on its head SHA.
 //
 // Used by the bundled `.github/workflows/skilled-pr-bypass.yml` workflow

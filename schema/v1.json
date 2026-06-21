@@ -20,9 +20,12 @@
     },
     "requiredSkills": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$"
+      },
       "default": ["review"],
-      "description": "Which review skills must run before the PR can merge. Each name matches the skill identifier (e.g. \"review\", \"coderabbit:review\", \"gstack:cso\").",
+      "description": "Which review skills must run before the PR can merge. Each name matches the skill identifier (e.g. \"review\", \"coderabbit:review\", \"gstack:cso\") and may contain letters, numbers, underscore, hyphen, and colon-separated scope segments.",
       "examples": [["review"], ["review", "coderabbit:review"]]
     },
     "statusName": {
@@ -84,7 +87,7 @@
           "type": "string",
           "enum": ["agent-decides", "always-fire"],
           "default": "agent-decides",
-          "description": "Whether the agent may skip review on trivial diffs (\"agent-decides\") or must always run (\"always-fire\")."
+          "description": "\"agent-decides\" lets the agent skip only review follow-up pushes, attestation retries, or unchanged metadata pushes. \"always-fire\" tells the agent to run the configured review skill(s) after every detected git push."
         },
         "askBeforeFiring": {
           "type": "boolean",
@@ -138,8 +141,11 @@
           },
           "requiredSkills": {
             "type": "array",
-            "items": { "type": "string" },
-            "description": "Override the top-level requiredSkills when this rule matches."
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$"
+            },
+            "description": "Override the top-level requiredSkills when this rule matches. Skill names may contain letters, numbers, underscore, hyphen, and colon-separated scope segments."
           },
           "failOn": {
             "type": "string",

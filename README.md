@@ -130,7 +130,12 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
     "execution": "subagent",
     "parallel": true,
     "sessionBriefing": true,
+    // "agent-decides" may skip only review follow-up pushes,
+    // attestation retries, or unchanged metadata pushes.
+    // "always-fire" runs the configured review skills after every
+    // detected git push.
     "skipPolicy": "agent-decides",
+    // When true, the on-push reminder asks before invoking review skills.
     "askBeforeFiring": false
   },
 

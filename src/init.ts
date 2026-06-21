@@ -256,10 +256,14 @@ function installUpdateSkillForHarness(harness: Harness, templateContent: string)
 /**
  * Conditionally install the PostToolUse:Bash hook that backs
  * `autoReview.trigger=on-push`. Loads the config to read the setting;
- * silently no-ops when:
+ * no-ops when:
  *   - config doesn't exist yet (fresh install, no .skilledpr/config.jsonc)
  *   - autoReview.trigger isn't on-push
  *   - Claude isn't in the harness scope (Codex-only repo)
+ *
+ * Invalid configs are surfaced as a warning because otherwise `init`
+ * appears successful while silently skipping the Bash hook users asked
+ * for by setting trigger=on-push.
  *
  * Idempotent — `mergeOnPushBashHook` checks for an existing
  * `skilled-pr hook` command before inserting a duplicate.
@@ -276,7 +280,10 @@ async function maybeInstallOnPushBashHook(harnesses: ReadonlyArray<Harness>): Pr
     const config = await loadConfig();
     if (!config) return;
     trigger = config.autoReview.trigger;
-  } catch {
+  } catch (e) {
+    console.warn(
+      `! Skipped ${claudeHarness.settingsPath} PostToolUse:Bash hook: ${(e as Error).message}`,
+    );
     return;
   }
   if (trigger !== "on-push") return;

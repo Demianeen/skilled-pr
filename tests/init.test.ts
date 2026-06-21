@@ -496,6 +496,22 @@ describe("init() v1 file layout", () => {
     expect(postToolUse.filter((e) => e.matcher === "Bash")).toHaveLength(1);
   });
 
+  test("warns when invalid config prevents on-push Bash hook detection", async () => {
+    mkdirSync(".skilledpr");
+    writeFileSync(".skilledpr/config.jsonc", "{ broken\n");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let warning = "";
+    try {
+      await init(["--install-mode=skip", "--for=claude"]);
+      warning = warnSpy.mock.calls.flat().join("\n");
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    expect(warning).toContain("Skipped .claude/settings.json PostToolUse:Bash hook");
+    expect(warning).toContain("Invalid .skilledpr/config.jsonc");
+  });
+
   test("continues installing healthy harnesses when one harness config is invalid", async () => {
     mkdirSync(".claude");
     mkdirSync(".codex");

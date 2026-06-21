@@ -1,4 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   classifyNodeVersion,
   classifyGhVersion,
@@ -14,6 +17,7 @@ import {
   classifyCodexVersion,
   classifyCodexHooks,
   classifyBranchProtection,
+  doctor,
   formatCheck,
   formatDoctorReport,
 } from "../src/doctor";
@@ -41,6 +45,11 @@ function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
 }
 
 const SV = `"schemaVersion": ${CURRENT_SCHEMA_VERSION}`;
+
+function writeExecutable(path: string, contents: string) {
+  writeFileSync(path, contents);
+  chmodSync(path, 0o755);
+}
 
 // ---------------------------------------------------------------------------
 // classifyNodeVersion
@@ -553,6 +562,82 @@ describe("classifyOnPushBashHook", () => {
     const r = classifyOnPushBashHook(settings);
     expect(r.status).toBe("pass");
     expect(r.detail).toContain("PostToolUse:Bash");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// doctor() integration
+// ---------------------------------------------------------------------------
+
+describe("doctor() harness guidance", () => {
+  let tmp: string;
+  let prevCwd: string;
+  let prevPath: string | undefined;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-doctor-"));
+    prevCwd = process.cwd();
+    prevPath = process.env.PATH;
+    process.chdir(tmp);
+
+    const bin = join(tmp, "bin");
+    mkdirSync(bin);
+    writeExecutable(join(bin, "node"), "#!/bin/sh\nprintf 'v22.11.0\\n'\n");
+    writeExecutable(
+      join(bin, "gh"),
+      "#!/bin/sh\nif [ \"$1\" = '--version' ]; then printf 'gh version 2.45.0\\n'; exit 0; fi\nif [ \"$1\" = 'auth' ]; then printf 'not logged in\\n' >&2; exit 1; fi\nexit 1\n",
+    );
+    writeExecutable(
+      join(bin, "git"),
+      "#!/bin/sh\nif [ \"$1\" = 'remote' ]; then printf 'no remote\\n' >&2; exit 1; fi\nexit 1\n",
+    );
+    writeExecutable(join(bin, "codex"), "#!/bin/sh\nprintf 'codex-cli 0.130.0\\n'\n");
+    process.env.PATH = `${bin}${process.platform === "win32" ? ";" : ":"}${prevPath ?? ""}`;
+  });
+
+  afterEach(() => {
+    process.chdir(prevCwd);
+    if (prevPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = prevPath;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("Codex-only on-push config reports Codex's manual limitation", async () => {
+    mkdirSync(".skilledpr");
+    mkdirSync(".codex");
+    writeFileSync(
+      ".skilledpr/config.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        requiredSkills: ["review"],
+        autoReview: { trigger: "on-push" },
+      }),
+    );
+    writeFileSync(
+      ".codex/hooks.json",
+      JSON.stringify({ hooks: [{ event: "UserPromptSubmit", command: "skilled-pr hook" }] }),
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit:${code}`);
+    }) as never);
+    let report = "";
+    try {
+      await expect(doctor()).rejects.toThrow("process.exit:1");
+      report = logSpy.mock.calls.flat().join("\n");
+    } finally {
+      logSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    expect(report).toContain("on-push Bash hook");
+    expect(report).toContain("Codex has no PostToolUse:Bash event");
+    expect(report).toContain("set autoReview.trigger to manual");
+    expect(report).not.toContain("autoReview.trigger=on-push but .claude/settings.json not found");
   });
 });
 

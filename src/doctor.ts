@@ -1105,7 +1105,13 @@ export async function doctor(args: string[] = []) {
       why: WHY_HOOKS,
     });
     if (shouldCheckOnPushBashHook) {
-      results.push(classifyOnPushBashHook(null));
+      results.push({
+        name: "on-push Bash hook",
+        status: "warn",
+        detail: "autoReview.trigger=on-push is Claude Code only; Codex has no PostToolUse:Bash event",
+        fix: "For Codex-only repos, set autoReview.trigger to manual. If you also use Claude Code, run skilled-pr init --for claude.",
+        why: WHY_ON_PUSH_BASH_HOOK,
+      });
     }
   } else {
     // Neither harness present: back-compat default for first-time users.

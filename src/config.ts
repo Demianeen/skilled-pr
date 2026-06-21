@@ -27,7 +27,7 @@ export interface AutoReviewConfig {
   parallel: boolean;
   /** Pass session briefing context to the skill (purpose/constraints/decisions/exclusions). */
   sessionBriefing: boolean;
-  /** Whether the agent decides to skip a review for trivial diffs, or always fires. */
+  /** Whether the agent may skip only review follow-up pushes, or always fires. */
   skipPolicy: "agent-decides" | "always-fire";
   /** Whether to ask the user before firing a required skill that wasn't explicitly invoked. */
   askBeforeFiring: boolean;
@@ -154,9 +154,24 @@ const DEFAULT_CONFIG_BASE = {
 export const CONFIG_PATH = ".skilledpr/config.jsonc";
 /** Legacy v0 config path at repo root. Detected so we can fail loudly with a migration hint. */
 export const LEGACY_CONFIG_PATH = ".skilledpr.jsonc";
+const SKILL_NAME_PATTERN = /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function validateRequiredSkills(raw: unknown, ctx: string): string[] {
+  if (!Array.isArray(raw) || !raw.every((s) => typeof s === "string")) {
+    throw new Error(`Invalid ${CONFIG_PATH}: ${ctx} must be an array of strings`);
+  }
+  for (const [idx, skill] of raw.entries()) {
+    if (!SKILL_NAME_PATTERN.test(skill)) {
+      throw new Error(
+        `Invalid ${CONFIG_PATH}: ${ctx}[${idx}] must be a skill name like "review" or "scope:review"`,
+      );
+    }
+  }
+  return raw as string[];
 }
 
 function validateMatchBlock(block: unknown, ctx: string): MatchBlock {
@@ -202,15 +217,7 @@ function validateRule(raw: unknown, idx: number): Rule {
     rule.name = raw.name;
   }
   if ("requiredSkills" in raw) {
-    if (
-      !Array.isArray(raw.requiredSkills) ||
-      !raw.requiredSkills.every((s) => typeof s === "string")
-    ) {
-      throw new Error(
-        `Invalid ${CONFIG_PATH}: rules[${idx}].requiredSkills must be an array of strings`,
-      );
-    }
-    rule.requiredSkills = raw.requiredSkills as string[];
+    rule.requiredSkills = validateRequiredSkills(raw.requiredSkills, `rules[${idx}].requiredSkills`);
   }
   if ("failOn" in raw) {
     if (raw.failOn !== "error" && raw.failOn !== "warning" && raw.failOn !== "none") {
@@ -343,15 +350,7 @@ export function parseConfig(raw: string): SkilledPRConfig {
   };
 
   if ("requiredSkills" in parsedObj) {
-    if (
-      !Array.isArray(parsedObj.requiredSkills) ||
-      !parsedObj.requiredSkills.every((s) => typeof s === "string")
-    ) {
-      throw new Error(
-        `Invalid ${CONFIG_PATH}: "requiredSkills" must be an array of strings`,
-      );
-    }
-    merged.requiredSkills = parsedObj.requiredSkills as string[];
+    merged.requiredSkills = validateRequiredSkills(parsedObj.requiredSkills, `"requiredSkills"`);
   }
   if ("statusName" in parsedObj) {
     if (typeof parsedObj.statusName !== "string" || parsedObj.statusName.length === 0) {
@@ -491,7 +490,10 @@ export function generateDefaultConfig(): string {
     "execution": "subagent",
     "parallel": true,
     "sessionBriefing": true,
+    // "agent-decides": may skip only review follow-up pushes, attestation
+    // retries, or unchanged metadata. "always-fire": never skip after push.
     "skipPolicy": "agent-decides",
+    // If true, on-push reminders ask the user before invoking review skills.
     "askBeforeFiring": false
   },
 

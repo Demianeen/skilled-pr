@@ -117,24 +117,38 @@ export function isGitPushInvocation(command: string): boolean {
 export function buildOnPushReminder(
   requiredSkills: ReadonlyArray<string>,
   skipPolicy: "agent-decides" | "always-fire",
+  askBeforeFiring = false,
 ): string {
   const skillsList = requiredSkills.map((s) => `/${s}`).join(", ");
   const lines: string[] = [];
   lines.push(`You just ran \`git push\`. This repo has \`autoReview.trigger=on-push\` enabled.`);
   lines.push("");
   if (skipPolicy === "always-fire") {
-    lines.push(
-      `Invoke the required review skill${requiredSkills.length === 1 ? "" : "s"} now: ${skillsList}. ` +
-        `Each will inject its own attestation reminder when loaded.`,
-    );
+    if (askBeforeFiring) {
+      lines.push(
+        `Ask the user before invoking the required review skill${requiredSkills.length === 1 ? "" : "s"}: ${skillsList}. ` +
+          `If they approve, invoke ${skillsList}; each skill injects its own attestation reminder when loaded.`,
+      );
+    } else {
+      lines.push(
+        `Invoke the required review skill${requiredSkills.length === 1 ? "" : "s"} now: ${skillsList}. ` +
+          `Each will inject its own attestation reminder when loaded.`,
+      );
+    }
     return lines.join("\n");
   }
   // agent-decides
   lines.push(`Decide whether this push introduced review-worthy changes since the last attested review.`);
   lines.push("");
-  lines.push(
-    `If it includes new source, tests, docs, config, behavior, or setup changes, invoke ${skillsList}. Each skill fires its own attestation reminder when loaded.`,
-  );
+  if (askBeforeFiring) {
+    lines.push(
+      `If it includes new source, tests, docs, config, behavior, or setup changes, ask the user before invoking ${skillsList}. If they approve, each skill fires its own attestation reminder when loaded.`,
+    );
+  } else {
+    lines.push(
+      `If it includes new source, tests, docs, config, behavior, or setup changes, invoke ${skillsList}. Each skill fires its own attestation reminder when loaded.`,
+    );
+  }
   lines.push("");
   lines.push(
     `If it only fixes findings from the most recent review, retries attestation, or publishes unchanged metadata, print EXACTLY this block to the user, then do NOT invoke a review skill:`,
@@ -142,7 +156,7 @@ export function buildOnPushReminder(
   lines.push("");
   lines.push("  ⏭️  Skilled PR auto-review: skipped");
   lines.push("  Reason: <one sentence - what the recent turns were doing>");
-  lines.push("  To force a fresh review, invoke the review skill manually.");
+  lines.push(`  To force a fresh review, invoke ${skillsList} manually.`);
   lines.push("");
   lines.push("Be conservative: if uncertain, run the review.");
   return lines.join("\n");
@@ -179,5 +193,9 @@ export async function maybeOnPushReminder(event: BashHookEvent): Promise<string 
   const profile = resolveProfile(config, getCurrentPRContext());
   if (profile.requiredSkills.length === 0) return null;
 
-  return buildOnPushReminder(profile.requiredSkills, config.autoReview.skipPolicy);
+  return buildOnPushReminder(
+    profile.requiredSkills,
+    config.autoReview.skipPolicy,
+    config.autoReview.askBeforeFiring,
+  );
 }

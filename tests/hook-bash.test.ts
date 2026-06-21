@@ -119,6 +119,13 @@ describe("buildOnPushReminder", () => {
     expect(out).toContain("/review, /security-review");
   });
 
+  test("always-fire with askBeforeFiring asks before invoking skills", () => {
+    const out = buildOnPushReminder(["review"], "always-fire", true);
+    expect(out).toContain("Ask the user before invoking");
+    expect(out).toContain("/review");
+    expect(out).not.toContain("Invoke the required review skill now");
+  });
+
   test("agent-decides policy: includes the decide block and skip block", () => {
     const out = buildOnPushReminder(["review"], "agent-decides");
     expect(out).toContain("Decide");
@@ -134,7 +141,20 @@ describe("buildOnPushReminder", () => {
     // the literal lines tests that they survive any future refactors.
     expect(out).toContain("  ⏭️  Skilled PR auto-review: skipped");
     expect(out).toContain("  Reason: <one sentence - what the recent turns were doing>");
-    expect(out).toContain("  To force a fresh review, invoke the review skill manually.");
+    expect(out).toContain("  To force a fresh review, invoke /review manually.");
+  });
+
+  test("agent-decides skip block names non-review skills in the manual fallback", () => {
+    const out = buildOnPushReminder(["security-review", "docs-review"], "agent-decides");
+    expect(out).toContain("invoke /security-review, /docs-review manually.");
+    expect(out).not.toContain("invoke the review skill manually");
+  });
+
+  test("agent-decides with askBeforeFiring asks before invoking review skills", () => {
+    const out = buildOnPushReminder(["review"], "agent-decides", true);
+    expect(out).toContain("ask the user before invoking /review");
+    expect(out).toContain("If they approve");
+    expect(out).toContain("⏭️  Skilled PR auto-review: skipped");
   });
 });
 
@@ -155,6 +175,8 @@ describe("maybeOnPushReminder", () => {
   function writeConfig(opts: {
     trigger?: "manual" | "on-push";
     requiredSkills?: string[];
+    skipPolicy?: "agent-decides" | "always-fire";
+    askBeforeFiring?: boolean;
     rules?: Array<{ match: Array<{ branch?: string }>; requiredSkills?: string[] }>;
   }) {
     const trigger = opts.trigger ?? "on-push";
@@ -165,7 +187,11 @@ describe("maybeOnPushReminder", () => {
         schemaVersion: 1,
         requiredSkills: skills,
         summaryPrompt: null,
-        autoReview: { trigger },
+        autoReview: {
+          trigger,
+          skipPolicy: opts.skipPolicy ?? "agent-decides",
+          askBeforeFiring: opts.askBeforeFiring ?? false,
+        },
         rules: opts.rules ?? [],
       }),
     );
@@ -246,6 +272,42 @@ describe("maybeOnPushReminder", () => {
       tool_input: { command: "git push" },
     });
     expect(result).toContain("/review, /security-review");
+  });
+
+  test("uses rule-resolved requiredSkills in the agent-decides skip fallback", async () => {
+    writeConfig({
+      trigger: "on-push",
+      requiredSkills: ["review"],
+      rules: [{ match: [{ branch: "*" }], requiredSkills: ["security-review"] }],
+    });
+    const result = await maybeOnPushReminder({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+    expect(result).toContain("invoke /security-review manually.");
+    expect(result).not.toContain("invoke the review skill manually");
+  });
+
+  test("uses always-fire skipPolicy from config", async () => {
+    writeConfig({ trigger: "on-push", skipPolicy: "always-fire" });
+    const result = await maybeOnPushReminder({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+    expect(result).toContain("Invoke the required review skill now");
+    expect(result).not.toContain("Decide whether this push introduced");
+  });
+
+  test("uses askBeforeFiring from config", async () => {
+    writeConfig({ trigger: "on-push", askBeforeFiring: true });
+    const result = await maybeOnPushReminder({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+    expect(result).toContain("ask the user before invoking /review");
   });
 
   test("returns reminder text when all conditions match", async () => {

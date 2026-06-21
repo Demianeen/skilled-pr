@@ -31,11 +31,22 @@ const SHELL_OP_PIPE = "|";
 export function stripLeadingChdir(command: string): string {
   const trimmed = command.replace(/^\s+/, "");
   if (!trimmed.startsWith("cd ")) return command;
-  // Find the chdir separator (either operator or naked, latter not valid).
-  const opIdx = findFirstShellOp(trimmed);
-  if (opIdx === -1) return command;
-  const rest = trimmed.slice(opIdx + (trimmed.startsWith(SHELL_OP_AMP, opIdx) ? SHELL_OP_AMP.length : 1)).replace(/^\s+/, "");
+  const separator = findLeadingChdirSeparator(trimmed);
+  if (separator === null) return command;
+  const rest = trimmed.slice(separator.idx + separator.length).replace(/^\s+/, "");
   return rest;
+}
+
+function findLeadingChdirSeparator(s: string): { idx: number; length: number } | null {
+  const amp = s.indexOf(SHELL_OP_AMP);
+  const semi = s.indexOf(SHELL_OP_SEMI);
+  const candidates = [
+    amp === -1 ? null : { idx: amp, length: SHELL_OP_AMP.length },
+    semi === -1 ? null : { idx: semi, length: 1 },
+  ].filter((v): v is { idx: number; length: number } => v !== null);
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.idx - b.idx);
+  return candidates[0];
 }
 
 function findFirstShellOp(s: string): number {

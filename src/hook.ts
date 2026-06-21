@@ -1,11 +1,13 @@
 // skilled-pr hook
 //
 // Invoked by the host harness (Claude Code or Codex) as a hook command.
-// Reads the hook event from stdin, decides whether the invoked skill is
-// listed in the v1 config's `requiredSkills` (after rule resolution
-// against the current PR context), and if so emits a
-// `hookSpecificOutput.additionalContext` JSON payload that injects an
-// attestation-instruction system reminder into the model's next turn.
+// Reads the hook event from stdin and emits a
+// `hookSpecificOutput.additionalContext` JSON payload in two cases:
+//
+//   1. A required review skill was invoked, so the model needs
+//      attestation instructions.
+//   2. Claude Code just ran `git push` in a repo with
+//      `autoReview.trigger=on-push`, so the model needs a review reminder.
 //
 // Why this exists: the hook turns "the user just invoked a required
 // review skill" into "the agent is told to write findings + run
@@ -18,6 +20,10 @@
 //       { hook_event_name: "PostToolUse",
 //         tool_name: "Skill",
 //         tool_input: { skill: "<skill-name>" }, ... }
+//     PostToolUse with tool_name = "Bash" (on-push reminder path):
+//       { hook_event_name: "PostToolUse",
+//         tool_name: "Bash",
+//         tool_input: { command: "git push" }, ... }
 //     UserPromptExpansion (covers the /slash-command path):
 //       { hook_event_name: "UserPromptExpansion",
 //         command_name: "<skill-name>", ... }
@@ -33,10 +39,10 @@
 //     A leading `/word` (or `/scope:word`) is the canonical invocation;
 //     natural-language "review this PR" is not gated by skilled-pr.
 //
-// We bail (exit 0, no output) for any event that doesn't resolve to a
-// known required skill: unrelated PostToolUse events, non-required
-// Skill invocations, UserPromptSubmit without a leading slash command,
-// and `command_source: "builtin"` slash commands like /help.
+// We bail (exit 0, no output) for events that are neither an on-push Bash
+// event nor a known required skill: unrelated PostToolUse events,
+// non-required Skill invocations, UserPromptSubmit without a leading slash
+// command, and `command_source: "builtin"` slash commands like /help.
 
 import { loadConfig } from "./config";
 import {

@@ -78,6 +78,10 @@ describe("isGitPushInvocation", () => {
     expect(isGitPushInvocation("cd /repo && git push | tee log")).toBe(false);
   });
 
+  test("rejects pipe-separated chdir prefixes", () => {
+    expect(isGitPushInvocation("cd /repo | git push")).toBe(false);
+  });
+
   test("rejects when push is second in a multi-command chain", () => {
     // After stripping the leading chdir, the rest has another operator.
     expect(isGitPushInvocation("cd /repo && git status && git push")).toBe(false);
@@ -148,7 +152,11 @@ describe("maybeOnPushReminder", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  function writeConfig(opts: { trigger?: "manual" | "on-push"; requiredSkills?: string[] }) {
+  function writeConfig(opts: {
+    trigger?: "manual" | "on-push";
+    requiredSkills?: string[];
+    rules?: Array<{ match: Array<{ branch?: string }>; requiredSkills?: string[] }>;
+  }) {
     const trigger = opts.trigger ?? "on-push";
     const skills = opts.requiredSkills ?? ["review"];
     writeFileSync(
@@ -158,6 +166,7 @@ describe("maybeOnPushReminder", () => {
         requiredSkills: skills,
         summaryPrompt: null,
         autoReview: { trigger },
+        rules: opts.rules ?? [],
       }),
     );
   }
@@ -209,6 +218,34 @@ describe("maybeOnPushReminder", () => {
       tool_input: { command: "git push" },
     });
     expect(result).toBeNull();
+  });
+
+  test("returns null when a matching rule clears requiredSkills", async () => {
+    writeConfig({
+      trigger: "on-push",
+      requiredSkills: ["review"],
+      rules: [{ match: [{ branch: "*" }], requiredSkills: [] }],
+    });
+    const result = await maybeOnPushReminder({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+    expect(result).toBeNull();
+  });
+
+  test("uses rule-resolved requiredSkills in the reminder", async () => {
+    writeConfig({
+      trigger: "on-push",
+      requiredSkills: ["review"],
+      rules: [{ match: [{ branch: "*" }], requiredSkills: ["review", "security-review"] }],
+    });
+    const result = await maybeOnPushReminder({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+    expect(result).toContain("/review, /security-review");
   });
 
   test("returns reminder text when all conditions match", async () => {

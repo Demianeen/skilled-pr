@@ -449,6 +449,23 @@ describe("classifyClaudeHooks", () => {
     expect(r.detail).toContain("UserPromptExpansion");
   });
 
+  test("Bash-only PostToolUse hook does not satisfy the required Skill hook", () => {
+    const settings = JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+        UserPromptExpansion: [
+          { matcher: "", hooks: [{ type: "command", command: "skilled-pr hook" }] },
+        ],
+      },
+    });
+    const r = classifyClaudeHooks(settings);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("PostToolUse:Skill");
+    expect(r.detail).toContain("some review invocation paths");
+  });
+
   test("only UserPromptExpansion installed → warn", () => {
     const settings = JSON.stringify({
       hooks: {

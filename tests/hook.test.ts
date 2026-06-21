@@ -459,6 +459,21 @@ describe("hook() PostToolUse:Bash path", () => {
     expect(errorSpy).not.toHaveBeenCalled();
     expect(logSpy).not.toHaveBeenCalled();
   });
+
+  test("fails open when Bash hook config loading errors", async () => {
+    writeFileSync(".skilledpr/config.jsonc", "{ broken\n");
+    const payload = JSON.stringify({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push" },
+    });
+
+    await hook(Readable.from([payload]));
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0][0]).toContain("Invalid .skilledpr/config.jsonc");
+  });
 });
 
 // ---------------------------------------------------------------------------

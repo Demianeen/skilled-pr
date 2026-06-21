@@ -543,7 +543,7 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
       why: WHY_HOOKS,
     };
   }
-  const settings = parsed as { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> };
+  const settings = parsed as { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ command?: string }> }>> };
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== "object") {
     return {
@@ -555,16 +555,19 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
     };
   }
 
-  const hasSkilledPrHook = (eventName: string): boolean => {
+  const hasSkilledPrHook = (eventName: string, matcher: string): boolean => {
     const entries = hooks[eventName];
     if (!Array.isArray(entries)) return false;
     return entries.some(
-      (e) => Array.isArray(e.hooks) && e.hooks.some((h) => h.command === "skilled-pr hook"),
+      (e) =>
+        (e.matcher ?? "") === matcher &&
+        Array.isArray(e.hooks) &&
+        e.hooks.some((h) => h.command === "skilled-pr hook"),
     );
   };
 
-  const postToolUse = hasSkilledPrHook("PostToolUse");
-  const userPrompt = hasSkilledPrHook("UserPromptExpansion");
+  const postToolUse = hasSkilledPrHook("PostToolUse", "Skill");
+  const userPrompt = hasSkilledPrHook("UserPromptExpansion", "");
 
   if (postToolUse && userPrompt) {
     return {
@@ -585,13 +588,13 @@ export function classifyClaudeHooks(rawContent: string | null): CheckResult {
   }
   // Partial install — one but not the other. Real users can hit this if
   // they edited settings manually.
-  const missing = [postToolUse ? null : "PostToolUse", userPrompt ? null : "UserPromptExpansion"]
+  const missing = [postToolUse ? null : "PostToolUse:Skill", userPrompt ? null : "UserPromptExpansion"]
     .filter(Boolean)
     .join(" + ");
   return {
     name: "Claude Code hooks",
     status: "warn",
-    detail: `missing: ${missing} (slash-command path won't trigger attestation)`,
+    detail: `missing: ${missing} (some review invocation paths won't trigger attestation)`,
     fix: "skilled-pr init  (idempotent, will add the missing hook)",
     why: WHY_HOOKS,
   };

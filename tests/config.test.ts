@@ -123,14 +123,14 @@ describe("parseConfig", () => {
     expect(() => parseConfig("{}")).toThrow(/schemaVersion.*required/);
   });
 
-  test("missing schemaVersion error mentions init and PR #2's migrator", () => {
+  test("missing schemaVersion error mentions init AND the /skilled-pr-update migration path", () => {
     try {
       parseConfig("{}");
       throw new Error("expected throw");
     } catch (e) {
       const msg = (e as Error).message;
       expect(msg).toMatch(/skilled-pr init/);
-      expect(msg).toMatch(/migrator|migration/i);
+      expect(msg).toMatch(/skilled-pr-update|migrate|migration/i);
     }
   });
 
@@ -199,6 +199,10 @@ describe("parseConfig", () => {
     const parsed = parseConfig(generateDefaultConfig());
     expect(parsed.summaryPrompt).toBe(DEFAULT_SUMMARY_PROMPT);
     expect(parsed.briefingPrompt).toBe(DEFAULT_BRIEFING_PROMPT);
+  });
+
+  test("generateDefaultConfig does not expose stack PR numbers to users", () => {
+    expect(generateDefaultConfig()).not.toContain("PR #");
   });
 
   test("DEFAULT_SUMMARY_PROMPT is a non-empty string", () => {

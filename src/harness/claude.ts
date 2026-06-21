@@ -69,6 +69,8 @@ export const claudeHarness: Harness = {
   name: "claude",
   label: "Claude Code",
   settingsPath: ".claude/settings.json",
+  skillsDir: ".claude/skills",
+  skillFileName: "SKILL.md",
   mergeHooks(existing: unknown): unknown {
     return mergeSkilledPRHooks((existing as ClaudeSettings | null) ?? null);
   },

@@ -215,18 +215,31 @@ describe("classifySkilledPRConfig", () => {
     // line for newer/older drift.
     const r = classifySkilledPRConfig('{ "requiredSkills": ["review"] }');
     expect(r.status).toBe("fail");
+    expect(r.detail).toContain("schemaVersion issue");
     expect(r.detail).toContain("schemaVersion");
+    expect(r.detail).not.toContain("parse error");
+    expect(r.fix).toContain("/skilled-pr-update");
+  });
+
+  test("schemaVersion mismatch → fail without syntax-error wording", () => {
+    const r = classifySkilledPRConfig('{ "schemaVersion": 0, "requiredSkills": ["review"] }');
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("schemaVersion issue");
+    expect(r.detail).not.toContain("parse error");
+    expect(r.fix).toContain("/skilled-pr-update");
   });
 
   test("invalid JSON → fail with parse error", () => {
     const r = classifySkilledPRConfig('{ not valid }');
     expect(r.status).toBe("fail");
     expect(r.detail).toContain("parse error");
+    expect(r.fix).toContain("JSONC syntax");
   });
 
   test("legacy `sha` field (migration) → fail with migration message", () => {
     const r = classifySkilledPRConfig(`{ ${SV}, "requiredSkills": ["review"], "sha": "head" }`);
     expect(r.status).toBe("fail");
+    expect(r.detail).toContain("config validation error");
     expect(r.detail).toContain("sha");
   });
 
@@ -270,6 +283,10 @@ describe("classifySchemaVersion", () => {
     const r = classifySchemaVersion(cfg);
     expect(r.status).toBe("warn");
     expect(r.fix).toMatch(/skilled-pr-update|skilled-pr init/);
+  });
+
+  test("schemaVersion explanation does not reference stack PR numbers", () => {
+    expect(classifySchemaVersion(baseConfig()).why).not.toContain("PR #");
   });
 });
 

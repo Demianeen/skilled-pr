@@ -12,7 +12,7 @@ That's it. No SDK, no API, no required dependencies. Just instructions in markdo
 
 ## What happens in practice
 
-When the user adds your skill to `requiredSkills` in `.skilledpr.jsonc` and invokes it:
+When the user adds your skill to `requiredSkills` in `.skilledpr/config.jsonc` and invokes it:
 
 1. Claude Code loads your `SKILL.md` into context.
 2. skilled-pr's PostToolUse hook fires, injects a system reminder telling the model: "after this review, write findings to `.review/findings-<slug>.json` AND write a markdown summary to `.review/summary-<slug>.md` following this project's `summaryPrompt` (embedded verbatim in the reminder), then run `skilled-pr attest --skill ... --findings ... --summary ...`."
@@ -20,7 +20,7 @@ When the user adds your skill to `requiredSkills` in `.skilledpr.jsonc` and invo
 4. The model performs the review per your instructions, writes findings.json AND summary.md, runs attest.
 5. attest validates the findings against the schema, PATCH-updates the per-skill artifact summary comment on the PR with the rendered summary verbatim, and posts the status check that gates the merge.
 
-Note: the `summaryPrompt` is per-project (in the user's `.skilledpr.jsonc`), not per-skill. Your skill produces structured findings; the project decides what the user-facing summary looks like. This means one skill can ship one canonical review behavior and projects can dress it up differently.
+Note: the `summaryPrompt` is per-project (in the user's `.skilledpr/config.jsonc`), not per-skill. Your skill produces structured findings; the project decides what the user-facing summary looks like. This means one skill can ship one canonical review behavior and projects can dress it up differently.
 
 You don't need to know any of this when authoring. Just describe what your skill should review — skilled-pr handles the GitHub integration.
 
@@ -64,7 +64,7 @@ is what tells the model what to do. The hook only fires for the user's required
 skills, and assumes your skill knows how to behave.
 ```
 
-That's a complete, working review skill. Drop it in `.claude/skills/my-review/SKILL.md` and add `"my-review"` to `requiredSkills` in `.skilledpr.jsonc`.
+That's a complete, working review skill. Drop it in `.claude/skills/my-review/SKILL.md` and add `"my-review"` to `requiredSkills` in `.skilledpr/config.jsonc`.
 
 ## What the hook does and doesn't do for you
 

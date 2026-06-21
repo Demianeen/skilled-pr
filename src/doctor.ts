@@ -225,7 +225,7 @@ export function classifySkilledPRConfig(
       name: CONFIG_PATH,
       status: "fail",
       detail: `legacy ${LEGACY_CONFIG_PATH} detected at repo root`,
-      fix: `Move ${LEGACY_CONFIG_PATH} to ${CONFIG_PATH} and add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\` (PR #2 will ship an automated migrator). Or run \`skilled-pr init\` to regenerate.`,
+      fix: `Invoke \`/skilled-pr-update\` to migrate automatically, or run \`skilled-pr init\` to regenerate, or manually move ${LEGACY_CONFIG_PATH} to ${CONFIG_PATH} and add \`"schemaVersion": ${CURRENT_SCHEMA_VERSION}\`.`,
       why: WHY_CONFIG,
     };
   }
@@ -256,11 +256,24 @@ export function classifySkilledPRConfig(
       why: WHY_CONFIG,
     };
   } catch (e) {
+    const message = (e as Error).message;
+    if (message.includes('"schemaVersion"')) {
+      return {
+        name: CONFIG_PATH,
+        status: "fail",
+        detail: `schemaVersion issue: ${message}`,
+        fix: "Invoke `/skilled-pr-update` to migrate automatically, or run `skilled-pr init` to regenerate.",
+        why: WHY_CONFIG,
+      };
+    }
+    const isSyntaxError = / at offset \d+/.test(message);
     return {
       name: CONFIG_PATH,
       status: "fail",
-      detail: `parse error: ${(e as Error).message}`,
-      fix: "Fix the syntax error or run `skilled-pr init` to regenerate",
+      detail: `${isSyntaxError ? "parse error" : "config validation error"}: ${message}`,
+      fix: isSyntaxError
+        ? "Fix the JSONC syntax or run `skilled-pr init` to regenerate"
+        : "Fix the config field named above or run `skilled-pr init` to regenerate",
       why: WHY_CONFIG,
     };
   }
@@ -272,7 +285,7 @@ export function classifySkilledPRConfig(
 // ---------------------------------------------------------------------------
 
 const WHY_SCHEMA_VERSION =
-  "skilled-pr's config schema is versioned. If your config is newer than the CLI, you'll get parse errors at runtime; if it's older, you'll miss new fields that PR #2's migrator can add automatically. doctor catches drift in both directions.";
+  "skilled-pr's config schema is versioned. If your config is newer than the CLI, you'll get parse errors at runtime; if it's older, you'll miss new fields that /skilled-pr-update can add automatically. doctor catches drift in both directions.";
 
 /**
  * Compare the loaded config's schemaVersion against the CLI's known
@@ -306,7 +319,7 @@ export function classifySchemaVersion(config: SkilledPRConfig | null): CheckResu
     name: "schemaVersion",
     status: "warn",
     detail: `config is v${config.schemaVersion}, CLI is v${CURRENT_SCHEMA_VERSION}`,
-    fix: "Run `/skilled-pr-update` (PR #2 will ship this skill) or `skilled-pr init` to regenerate.",
+    fix: "Run `/skilled-pr-update` to migrate, or `skilled-pr init` to regenerate.",
     why: WHY_SCHEMA_VERSION,
   };
 }

@@ -126,7 +126,8 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   "briefingPrompt": null,
 
   // Manual inline review is the default. Set execution to "subagent"
-  // only when the extra review context is worth the orchestration.
+  // only when isolated review is worth the orchestration. Set
+  // sessionBriefing to true if the subagent needs session context.
   "autoReview": {
     "trigger": "manual",
     "execution": "main-agent",

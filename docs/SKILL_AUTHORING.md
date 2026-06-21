@@ -5,8 +5,9 @@ skilled-pr works with any Claude Code skill that follows this contract. If the s
 This is the entire contract:
 
 1. The skill is a Claude Code skill — a directory with a `SKILL.md` (and optionally helpers).
-2. When invoked, the skill's instructions tell the model to: review the diff, write findings to `.review/findings-<slug>.json`, and run `skilled-pr attest --skill <name> --findings <path>`.
-3. The findings file follows the schema in [SCHEMA.md](./SCHEMA.md).
+2. When invoked, the skill produces both review artifacts: `.review/findings-<slug>.json` and `.review/summary-<slug>.md`.
+3. The skill, or skilled-pr's required-skill reminder, runs `skilled-pr attest --skill <name> --findings <findings-path> --summary <summary-path>`.
+4. The findings file follows the schema in [SCHEMA.md](./SCHEMA.md); the summary is the markdown body reviewers see on the PR.
 
 That's it. No SDK, no API, no required dependencies. Just instructions in markdown.
 
@@ -57,11 +58,15 @@ You are a security-focused reviewer specializing in buffer-overflow bugs in C co
 4. Write the findings array to `.review/findings-my-review.json`. Empty array
    if you found nothing.
 
-5. Run: `skilled-pr attest --skill my-review --findings .review/findings-my-review.json`
+5. Write a concise markdown summary to `.review/summary-my-review.md`. Include
+   the finding count, each finding's path and line, and a clear pass/fail note.
 
-Skilled PR's hook will not inject its system reminder for you here — your skill
-is what tells the model what to do. The hook only fires for the user's required
-skills, and assumes your skill knows how to behave.
+6. Run: `skilled-pr attest --skill my-review --findings .review/findings-my-review.json --summary .review/summary-my-review.md`
+
+This example includes the artifact and attest instructions explicitly, so it
+also works outside a skilled-pr required-skill hook. When the skill is listed
+in `requiredSkills`, skilled-pr will add the same artifact and attest reminder
+with this project's configured summary prompt.
 ```
 
 That's a complete, working review skill. Drop it in `.claude/skills/my-review/SKILL.md` and add `"my-review"` to `requiredSkills` in `.skilledpr/config.jsonc`.
@@ -70,7 +75,7 @@ That's a complete, working review skill. Drop it in `.claude/skills/my-review/SK
 
 The PostToolUse hook (installed by `skilled-pr init`) ONLY fires when a skill listed in `requiredSkills` is invoked. When it fires, it injects this system reminder into the model's next turn:
 
-> "After completing your review, write your findings to `.review/findings-<slug>.json` and run `skilled-pr attest --skill <name> --findings <path>`."
+> "After completing your review, write findings to `.review/findings-<slug>.json`, write a markdown summary to `.review/summary-<slug>.md`, then run `skilled-pr attest --skill <name> --findings <path> --summary <path>`."
 
 This is a reminder, not a replacement for your skill's instructions. The model still needs to know HOW to review — that's your skill's job. The hook just guarantees the findings get attested at the end.
 

@@ -13,7 +13,7 @@ skilled-pr supports both Claude Code and OpenAI Codex. If you've already run `sk
 }
 ```
 
-That's the only difference from a Claude Code install. Everything else (the `.skilledpr.jsonc` config, the `attest` flow, GitHub status posting) is identical.
+That is the main install difference from a Claude Code setup. The manual `attest` flow and GitHub status posting are identical, but Codex does not have every Claude hook event. The differences that affect review firing are listed below.
 
 ### Auto-detection
 
@@ -50,6 +50,7 @@ The "leading slash only" rule is deliberate. Gate enforcement should track expli
 ## What does NOT work in Codex (and why)
 
 - **Agent-initiated reviews**: If Codex reads `SKILL.md` because it inferred the user wanted a review, `skilled-pr hook` never fires (it only fires on user-typed prompts). Workaround: have your skill instruct the model to remind the user to type `/skillname` explicitly, or wire your skill's review process to call `skilled-pr attest` directly at the end.
+- **`autoReview.trigger=on-push` reminders**: The on-push reminder depends on Claude Code's `PostToolUse:Bash` event after an agent runs `git push`. Codex has no equivalent event in this release, so Codex users keep invoking `/review` or another required skill manually.
 - **Slash-commands inside chained messages**: Only the leading slash is parsed. `/review and /lint` triggers `review` but not `lint`. Codex doesn't model multiple commands per turn cleanly anyway.
 
 ## Troubleshooting

@@ -51,6 +51,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   get a pending status with a CTA description until `attest` runs.
   No AI runs in CI — only the rule resolver. The migrator detects
   pin drift after a CLI upgrade and offers `--apply` to refresh.
+
+- **`autoReview.trigger=on-push` (Claude Code).** When set, the agent
+  running `git push` via the Bash tool triggers a reminder to invoke
+  the required review skill(s). Detection handles `cd <path> && git
+  push` chdir prefixes; rejects `--dry-run`. The reminder adapts to
+  `autoReview.skipPolicy`:
+    - `agent-decides` (default): tells the agent to choose between
+      net-new work (review) and fix-up (skip with a loud
+      `⏭️  Skilled PR auto-review: skipped` block to the user).
+    - `always-fire`: unconditionally invoke required skills.
+  `init` installs the PostToolUse:Bash hook conditionally when
+  `autoReview.trigger=on-push` is set in config. Codex is skipped (no
+  PostToolUse:Bash equivalent); Codex users continue with manual
+  invocation.
 - **Per-context `rules`.** Each rule's `match` array OR's together;
   keys within a single block (`branch` glob, `author` exact match,
   `labels` subset) AND together. Optional override fields

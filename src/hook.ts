@@ -1,11 +1,13 @@
 // skilled-pr hook
 //
 // Invoked by the host harness (Claude Code or Codex) as a hook command.
-// Reads the hook event from stdin, decides whether the invoked skill is
-// listed in the v1 config's `requiredSkills` (after rule resolution
-// against the current PR context), and if so emits a
-// `hookSpecificOutput.additionalContext` JSON payload that injects an
-// attestation-instruction system reminder into the model's next turn.
+// Reads the hook event from stdin and emits a
+// `hookSpecificOutput.additionalContext` JSON payload in two cases:
+//
+//   1. A required review skill was invoked, so the model needs
+//      attestation instructions.
+//   2. Claude Code just ran `git push` in a repo with
+//      `autoReview.trigger=on-push`, so the model needs a review reminder.
 //
 // Why this exists: the hook turns "the user just invoked a required
 // review skill" into "the agent is told to write findings + run
@@ -18,6 +20,10 @@
 //       { hook_event_name: "PostToolUse",
 //         tool_name: "Skill",
 //         tool_input: { skill: "<skill-name>" }, ... }
+//     PostToolUse with tool_name = "Bash" (on-push reminder path):
+//       { hook_event_name: "PostToolUse",
+//         tool_name: "Bash",
+//         tool_input: { command: "git push" }, ... }
 //     UserPromptExpansion (covers the /slash-command path):
 //       { hook_event_name: "UserPromptExpansion",
 //         command_name: "<skill-name>", ... }
@@ -33,10 +39,10 @@
 //     A leading `/word` (or `/scope:word`) is the canonical invocation;
 //     natural-language "review this PR" is not gated by skilled-pr.
 //
-// We bail (exit 0, no output) for any event that doesn't resolve to a
-// known required skill: unrelated PostToolUse events, non-required
-// Skill invocations, UserPromptSubmit without a leading slash command,
-// and `command_source: "builtin"` slash commands like /help.
+// We bail (exit 0, no output) for events that are neither an on-push Bash
+// event nor a known required skill: unrelated PostToolUse events,
+// non-required Skill invocations, UserPromptSubmit without a leading slash
+// command, and `command_source: "builtin"` slash commands like /help.
 
 import { loadConfig } from "./config";
 import {
@@ -125,7 +131,14 @@ export function readStdin(
 interface HookEvent {
   hook_event_name?: string;
   tool_name?: string;
-  tool_input?: { skill?: string };
+  /**
+   * Union of the tool-specific inputs we care about:
+   *   - PostToolUse:Skill   →  { skill: string }
+   *   - PostToolUse:Bash    →  { command: string } (used by the on-push
+   *     trigger in src/hook-bash.ts)
+   * Other tool types still fire PostToolUse but we ignore their inputs.
+   */
+  tool_input?: { skill?: string; command?: string };
   command_name?: string;
   /** Codex UserPromptSubmit. The full text the user just submitted. */
   prompt?: string;
@@ -245,14 +258,45 @@ export function buildHookOutput(
  * us, so the dominant case (non-Skill PostToolUse,
  * non-required-skill UserPromptExpansion) does no I/O.
  */
-export async function hook() {
+export async function hook(stream: NodeJS.ReadableStream = process.stdin) {
   let event: HookEvent;
   try {
-    const stdin = await readStdin();
+    const stdin = await readStdin(stream);
     if (stdin.trim().length === 0) return;
     event = JSON.parse(stdin) as HookEvent;
   } catch (e) {
     console.error(`skilled-pr hook: malformed stdin (${(e as Error).message})`);
+    return;
+  }
+
+  // PostToolUse:Bash branch: fires the autoReview.trigger=on-push reminder
+  // when the agent just ran `git push`. `maybeOnPushReminder` does its own
+  // config load + early-bail on the bash command not being a push, so the
+  // hot path stays cheap on the common case (every Bash invocation).
+  if (event.hook_event_name === "PostToolUse" && event.tool_name === "Bash") {
+    // Wrap in try/catch for the same reason the Skill branch (below) does:
+    // a malformed config or unexpected exception inside maybeOnPushReminder
+    // would otherwise let the hook exit non-zero with a stack trace on
+    // every `git push` invocation, breaking the file-header contract that
+    // a misconfigured skilled-pr never blocks the model.
+    let reminder: string | null = null;
+    try {
+      const { maybeOnPushReminder } = await import("./hook-bash");
+      reminder = await maybeOnPushReminder(event);
+    } catch (e) {
+      console.error(`skilled-pr hook: ${(e as Error).message}`);
+      return;
+    }
+    if (reminder !== null) {
+      console.log(
+        JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: "PostToolUse",
+            additionalContext: reminder,
+          },
+        }),
+      );
+    }
     return;
   }
 

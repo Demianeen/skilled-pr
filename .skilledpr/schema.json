@@ -20,9 +20,12 @@
     },
     "requiredSkills": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$"
+      },
       "default": ["review"],
-      "description": "Which review skills must run before the PR can merge. Each name matches the skill identifier (e.g. \"review\", \"coderabbit:review\", \"gstack:cso\").",
+      "description": "Which review skills must run before the PR can merge. Each name matches the skill identifier (e.g. \"review\", \"coderabbit:review\", \"gstack:cso\") and may contain letters, numbers, underscore, hyphen, and colon-separated scope segments.",
       "examples": [["review"], ["review", "coderabbit:review"]]
     },
     "statusName": {
@@ -48,19 +51,19 @@
     "briefingPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "description": "Slot-fill template used by auto-review when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
       "examples": [null]
     },
     "autoReview": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Auto-review behaviour (PR #4). All fields optional with built-in defaults.",
+      "description": "Auto-review behaviour. All fields optional with built-in defaults.",
       "properties": {
         "trigger": {
           "type": "string",
           "enum": ["manual", "on-push"],
           "default": "manual",
-          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = automatic via PR #2's GH Action.",
+          "description": "When review reminders fire. \"manual\" = only when the user invokes a required skill; \"on-push\" = Claude Code only: after an agent runs git push through Bash, inject a reminder to invoke the required skill(s). Codex has no PostToolUse:Bash event and stays manual. After changing an initialized repo to \"on-push\", re-run skilled-pr init --for claude so .claude/settings.json gets the Bash hook.",
           "examples": ["manual", "on-push"]
         },
         "execution": {
@@ -84,7 +87,7 @@
           "type": "string",
           "enum": ["agent-decides", "always-fire"],
           "default": "agent-decides",
-          "description": "Whether the agent may skip review on trivial diffs (\"agent-decides\") or must always run (\"always-fire\")."
+          "description": "\"agent-decides\" lets the agent skip only review follow-up pushes, attestation retries, or unchanged metadata pushes. \"always-fire\" tells the agent to run the configured review skill(s) after every detected git push."
         },
         "askBeforeFiring": {
           "type": "boolean",
@@ -138,8 +141,11 @@
           },
           "requiredSkills": {
             "type": "array",
-            "items": { "type": "string" },
-            "description": "Override the top-level requiredSkills when this rule matches."
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$"
+            },
+            "description": "Override the top-level requiredSkills when this rule matches. Skill names may contain letters, numbers, underscore, hyphen, and colon-separated scope segments."
           },
           "failOn": {
             "type": "string",

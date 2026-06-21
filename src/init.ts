@@ -2,20 +2,22 @@
 // Sets up Skilled PR in the current repo.
 //
 // What this does (in order):
-//   1. Choose install mode (local devDependency vs global) — flag,
+//   1. Parse install and harness flags.
+//   2. Detect target harnesses (Claude Code, Codex, or both).
+//   3. Choose install mode (local devDependency vs global): flag,
 //      interactive prompt, or auto-detect heuristic.
-//   2. Install skilled-pr@<version> via the detected package manager
+//   4. Install skilled-pr@<version> via the detected package manager
 //      (unless --install-mode=skip).
-//   3. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
-//   4. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
+//   5. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
+//   6. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
 //      pick up autocompletion.
-//   5. Ensure `.review/` is gitignored.
-//   6. Install hooks into every detected harness (Claude Code, Codex,
-//      both). Detection scans for `.claude/` and `.codex/`. Override
-//      with `--for claude|codex|both`.
-//   7. Install the /skilled-pr-update skill into each harness's skills
+//   7. Ensure `.review/` is gitignored.
+//   8. Install hooks into every detected harness. Detection scans for
+//      `.claude/` and `.codex/`. Override with `--for claude|codex|both`.
+//   9. Install the /skilled-pr-update skill into each harness's skills
 //      dir so the user can later upgrade via /skilled-pr-update.
-//   8. Print next-step guidance.
+//   10. If enabled, install Claude Code's on-push Bash hook.
+//   11. Print next-step guidance.
 //
 // All the per-harness specifics live in `src/harness/*`. This file is
 // orchestration + the install-mode UI.
@@ -37,8 +39,8 @@ import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc
 
 import { parseInitArgs } from "./args";
 import { CONFIG_PATH, generateDefaultConfig } from "./config";
-import type { Harness } from "./harness";
-import { detectHarnesses, resolveHarnessOverride } from "./harness";
+import type { ClaudeSettings, Harness } from "./harness";
+import { detectHarnesses, mergeOnPushBashHook, resolveHarnessOverride } from "./harness";
 import { buildInstallArgv, detectPackageManager, type PackageManager } from "./pm-detect";
 
 // Re-export legacy types so existing imports (tests, doctor.ts) keep working.
@@ -252,6 +254,64 @@ function installUpdateSkillForHarness(harness: Harness, templateContent: string)
 }
 
 /**
+ * Conditionally install the PostToolUse:Bash hook that backs
+ * `autoReview.trigger=on-push`. Loads the config to read the setting;
+ * no-ops when:
+ *   - config doesn't exist yet (fresh install, no .skilledpr/config.jsonc)
+ *   - autoReview.trigger isn't on-push
+ *   - Claude isn't in the harness scope (Codex-only repo)
+ *
+ * Invalid configs are surfaced as a warning because otherwise `init`
+ * appears successful while silently skipping the Bash hook users asked
+ * for by setting trigger=on-push.
+ *
+ * Idempotent — `mergeOnPushBashHook` checks for an existing
+ * `skilled-pr hook` command before inserting a duplicate.
+ */
+async function maybeInstallOnPushBashHook(harnesses: ReadonlyArray<Harness>): Promise<void> {
+  const claudeHarness = harnesses.find((h) => h.name === "claude");
+  if (!claudeHarness) return;
+  // Read config; bail silently if missing or unparseable. The user may
+  // be running `skilled-pr init` for the first time; the bash hook gets
+  // installed on the next `init` once they've enabled on-push in config.
+  let trigger: "manual" | "on-push";
+  try {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig();
+    if (!config) return;
+    trigger = config.autoReview.trigger;
+  } catch (e) {
+    console.warn(
+      `! Skipped ${claudeHarness.settingsPath} PostToolUse:Bash hook: ${(e as Error).message}`,
+    );
+    return;
+  }
+  if (trigger !== "on-push") return;
+
+  // Existing settings → merge → write (only if changed).
+  let existing: unknown = null;
+  if (existsSync(claudeHarness.settingsPath)) {
+    const raw = readFileSync(claudeHarness.settingsPath, "utf8");
+    const errors: ParseError[] = [];
+    existing = parseJsonc(raw, errors, { allowTrailingComma: true });
+    if (errors.length > 0) {
+      // Tolerate parse errors here — installForHarness already surfaced
+      // them earlier in init's run.
+      return;
+    }
+  }
+  const merged = mergeOnPushBashHook(existing as ClaudeSettings | null);
+  const before = existing === null ? null : JSON.stringify(existing);
+  const after = JSON.stringify(merged);
+  if (before === after) {
+    console.log(`✓ ${claudeHarness.settingsPath} already has PostToolUse:Bash hook (Claude Code)`);
+    return;
+  }
+  writeFileWithMkdir(claudeHarness.settingsPath, JSON.stringify(merged, null, 2) + "\n");
+  console.log(`✓ Updated ${claudeHarness.settingsPath} with PostToolUse:Bash hook for on-push trigger (Claude Code)`);
+}
+
+/**
  * Interactive prompt asking the user which install mode they want.
  * Used only when stdin is a TTY; non-TTY callers fall back to
  * `detectDefaultInstallMode`.
@@ -440,7 +500,13 @@ export async function init(argv: string[] = []) {
     );
   }
 
-  // 9. Next steps.
+  // 10. Install the PostToolUse:Bash hook for autoReview.trigger=on-push.
+  //     Claude-only (Codex has no PostToolUse:Bash equivalent). Skipped if
+  //     the config can't be loaded yet (fresh install) or if trigger
+  //     isn't on-push. Idempotent — safe to re-run.
+  await maybeInstallOnPushBashHook(harnesses);
+
+  // 11. Next steps.
   const harnessList = harnesses.map((h) => h.label).join(" + ");
   console.log(`
 Next steps:

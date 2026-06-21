@@ -9,6 +9,7 @@ import {
   ensureGitignoreEntry,
   type ClaudeSettings,
 } from "../src/init";
+import { mergeOnPushBashHook } from "../src/harness";
 
 const SKILLED_PR_CMD = "skilled-pr hook";
 
@@ -100,6 +101,21 @@ describe("mergeSkilledPRHooks", () => {
     expect(countSkilledPREntries(out, "UserPromptExpansion")).toBe(1);
   });
 
+  test("idempotent across PostToolUse matchers: prior Bash entry doesn't suppress Skill add", () => {
+    const partial: ClaudeSettings = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+      },
+    };
+    const out = mergeSkilledPRHooks(partial);
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(2);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Bash")).toBe(true);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Skill")).toBe(true);
+    expect(countSkilledPREntries(out, "UserPromptExpansion")).toBe(1);
+  });
+
   test("does not mutate the input settings object", () => {
     const existing: ClaudeSettings = {
       hooks: {
@@ -123,6 +139,40 @@ describe("mergeSkilledPRHooks", () => {
     };
     const out = mergeSkilledPRHooks(existing);
     expect(out.hooks!.PostToolUse).not.toBe(existing.hooks!.PostToolUse);
+  });
+});
+
+describe("mergeOnPushBashHook", () => {
+  test("from null settings, adds PostToolUse:Bash only", () => {
+    const out = mergeOnPushBashHook(null);
+    expect(out.hooks?.PostToolUse).toHaveLength(1);
+    expect(out.hooks?.PostToolUse?.[0].matcher).toBe("Bash");
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(1);
+    expect(out.hooks?.UserPromptExpansion).toBeUndefined();
+  });
+
+  test("existing PostToolUse:Skill does not suppress PostToolUse:Bash", () => {
+    const existing: ClaudeSettings = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Skill", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+        UserPromptExpansion: [
+          { matcher: "", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+      },
+    };
+    const out = mergeOnPushBashHook(existing);
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(2);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Skill")).toBe(true);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Bash")).toBe(true);
+  });
+
+  test("idempotent: re-running does not duplicate PostToolUse:Bash", () => {
+    const once = mergeOnPushBashHook(mergeSkilledPRHooks(null));
+    const twice = mergeOnPushBashHook(once);
+    expect(countSkilledPREntries(twice, "PostToolUse")).toBe(2);
+    expect(twice.hooks?.PostToolUse?.filter((e) => e.matcher === "Bash")).toHaveLength(1);
   });
 });
 
@@ -412,6 +462,54 @@ describe("init() v1 file layout", () => {
         e.hooks.some((h) => h.command === "skilled-pr hook"),
     ).length;
     expect(count).toBe(1);
+  });
+
+  test("on-push config installs Claude Bash hook and remains idempotent", async () => {
+    mkdirSync(".skilledpr");
+    writeFileSync(
+      ".skilledpr/config.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        requiredSkills: ["review"],
+        autoReview: { trigger: "on-push" },
+      }),
+    );
+
+    await init(["--install-mode=skip", "--for=claude"]);
+    await init(["--install-mode=skip", "--for=claude"]);
+
+    const parsed = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
+    const postToolUse = parsed.hooks.PostToolUse as Array<{
+      matcher?: string;
+      hooks: Array<{ command?: string }>;
+    }>;
+    expect(
+      postToolUse.some(
+        (e) => e.matcher === "Skill" && e.hooks.some((h) => h.command === "skilled-pr hook"),
+      ),
+    ).toBe(true);
+    expect(
+      postToolUse.some(
+        (e) => e.matcher === "Bash" && e.hooks.some((h) => h.command === "skilled-pr hook"),
+      ),
+    ).toBe(true);
+    expect(postToolUse.filter((e) => e.matcher === "Bash")).toHaveLength(1);
+  });
+
+  test("warns when invalid config prevents on-push Bash hook detection", async () => {
+    mkdirSync(".skilledpr");
+    writeFileSync(".skilledpr/config.jsonc", "{ broken\n");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let warning = "";
+    try {
+      await init(["--install-mode=skip", "--for=claude"]);
+      warning = warnSpy.mock.calls.flat().join("\n");
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    expect(warning).toContain("Skipped .claude/settings.json PostToolUse:Bash hook");
+    expect(warning).toContain("Invalid .skilledpr/config.jsonc");
   });
 
   test("continues installing healthy harnesses when one harness config is invalid", async () => {

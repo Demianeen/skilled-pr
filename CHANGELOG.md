@@ -95,14 +95,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   for the current (or a hypothetical) PR context. With a positional
   field name (`show summaryPrompt`), prints type/default/source/value
   for that field plus the description from the JSON schema. With
-  `--reminder`, prints the literal reminder body the hook would
-  inject.
-- **`briefingPrompt`.** Slot-fill template used by the upcoming
-  auto-review feature (PR #4) to relay session context to a reviewing
-  subagent. Defaults to a built-in template; override to customise.
-- **`autoReview` config block.** Optional settings consumed by PR #4
-  (trigger, execution mode, parallelism, skip policy, askBeforeFiring).
-  Parses cleanly in v1 even though enforcement lands later.
+  `--reminder`, prints the literal reminder body the hook would inject
+  for every required skill.
+- **`briefingPrompt`.** Slot-fill template used by opt-in
+  `autoReview.execution=subagent` mode to relay session context to a
+  reviewing subagent. Defaults to a built-in template; override to
+  customise.
+- **`autoReview` config block.** Optional settings for manual vs
+  on-push triggering, inline vs subagent execution, session briefing,
+  and skip policy.
 - **`pnpm bench` / `pnpm bench:check`.** Hook hot-path benchmarks
   plus a p95-under-10ms perf budget test. Inline path measures at
   ~0.005ms mean vs ~222ms for a hypothetical CLI-subprocess design

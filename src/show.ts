@@ -20,9 +20,9 @@
 //        skilled-pr show --reminder
 //        skilled-pr show --reminder --branch release-1.0
 //      In addition to the overview, prints the literal reminder text
-//      that would be injected for the FIRST required skill in the
-//      resolved profile. Useful for "what does the model actually
-//      see?" debugging.
+//      that would be injected for every required skill in the resolved
+//      profile. Useful for "what does the model actually see?"
+//      debugging.
 //
 // Implementation deliberately reuses resolveProfile + formatReminder so
 // the output here is byte-identical to what the hook produces.
@@ -252,15 +252,16 @@ function printReminder(profile: ResolvedProfile): void {
     console.log(`  ${ICON.warn} No required skills resolved — nothing would be injected.`);
     return;
   }
-  const skill = profile.requiredSkills[0];
   const harnessNames: HarnessName[] = detectHarnesses().map((h) => h.name);
   if (harnessNames.length === 0) harnessNames.push("claude");
-  for (const harnessName of harnessNames) {
-    printSection(`Reminder body (skill: ${skill}, harness: ${harnessName})`);
-    // Indent each line by two spaces so it's visually distinct from the
-    // surrounding skilled-pr show output.
-    for (const line of formatReminder(profile, skill, harnessName).split("\n")) {
-      console.log(`  ${line}`);
+  for (const skill of profile.requiredSkills) {
+    for (const harnessName of harnessNames) {
+      printSection(`Reminder body (skill: ${skill}, harness: ${harnessName})`);
+      // Indent each line by two spaces so it's visually distinct from the
+      // surrounding skilled-pr show output.
+      for (const line of formatReminder(profile, skill, harnessName).split("\n")) {
+        console.log(`  ${line}`);
+      }
     }
   }
 }
@@ -301,10 +302,8 @@ function printFieldDetail(field: string, config: SkilledPRConfig): number {
       defaultValue: {
         trigger: "manual",
         execution: "main-agent",
-        parallel: true,
         sessionBriefing: false,
         skipPolicy: "agent-decides",
-        askBeforeFiring: false,
       },
     }),
     rules: () => ({

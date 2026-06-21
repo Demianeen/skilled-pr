@@ -130,6 +130,23 @@ describe("show — overview (no args)", () => {
     expect(stdout).not.toContain("spawn ONE subagent");
   });
 
+  test("--reminder prints every required skill", async () => {
+    writeConfig(
+      tmp,
+      `{
+  "schemaVersion": 1,
+  "requiredSkills": ["review", "coderabbit:review"],
+  "rules": []
+}
+`,
+    );
+    const { stdout } = await runShow(["--reminder"]);
+    expect(stdout).toContain("Reminder body (skill: review");
+    expect(stdout).toContain("Reminder body (skill: coderabbit:review");
+    expect(stdout).toContain(".review/findings-review.json");
+    expect(stdout).toContain(".review/findings-coderabbit-review.json");
+  });
+
   test("--reminder uses the detected Codex harness for subagent wording", async () => {
     mkdirSync(join(tmp, ".codex"), { recursive: true });
     writeConfig(

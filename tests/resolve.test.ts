@@ -28,10 +28,8 @@ function baseConfig(overrides: Partial<SkilledPRConfig> = {}): SkilledPRConfig {
     autoReview: {
       trigger: "manual",
       execution: "main-agent",
-      parallel: true,
       sessionBriefing: false,
       skipPolicy: "agent-decides",
-      askBeforeFiring: false,
     },
     rules: [],
     ...overrides,

@@ -113,12 +113,26 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   "failOn": "error",
 
   // Per-skill summary prompt. null = use the built-in default; set a
-  // non-empty string to override per project. Tune per project — a
+  // non-empty string to override per project. Tune per project: a
   // typo-check skill wants a different format than a security-review
   // skill, and one hardcoded template can't serve both.
   //
   // See `skilled-pr show summaryPrompt` for the rendered value.
   "summaryPrompt": null,
+
+  // Session-briefing prompt used only when autoReview.execution is
+  // "subagent" and autoReview.sessionBriefing is true. null uses the
+  // built-in slot-fill template.
+  "briefingPrompt": null,
+
+  // Manual inline review is the default. Set execution to "subagent"
+  // only when the extra review context is worth the orchestration.
+  "autoReview": {
+    "trigger": "manual",
+    "execution": "main-agent",
+    "sessionBriefing": false,
+    "skipPolicy": "agent-decides"
+  },
 
   // Per-context rule overlays. First matching rule wins; match blocks
   // OR together, keys within a block (branch + author + labels) AND.

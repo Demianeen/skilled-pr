@@ -40,16 +40,14 @@
   //   `skilled-pr show briefingPrompt`
   "briefingPrompt": null,
 
-  // Auto-review behaviour. Optional; defaults shown here. The default keeps
-  // review inline; opt into subagent execution only when the extra
-  // orchestration is worth it.
+  // Auto-review behaviour. Optional; the active defaults are shown here.
+  // The default keeps review inline; opt into subagent execution only when
+  // the extra orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
     "execution": "main-agent",
-    "parallel": true,
     "sessionBriefing": false,
-    "skipPolicy": "agent-decides",
-    "askBeforeFiring": false
+    "skipPolicy": "agent-decides"
   },
 
   // Per-context overrides. Each rule's `match` array OR's together;

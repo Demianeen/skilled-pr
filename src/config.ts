@@ -18,18 +18,14 @@ export const CURRENT_SCHEMA_VERSION = 1 as const;
  * subagent orchestration explicit opt-in.
  */
 export interface AutoReviewConfig {
-  /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = automatic via PR #2's GH Action. */
+  /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = local Claude Code hook after git push. */
   trigger: "manual" | "on-push";
   /** Where the skill runs. "subagent" = isolated context; "main-agent" = inline in the orchestrator. */
   execution: "subagent" | "main-agent";
-  /** Whether multiple required skills run in parallel (or serially). */
-  parallel: boolean;
   /** Pass session briefing context to the skill when execution is "subagent". */
   sessionBriefing: boolean;
   /** Whether the agent decides to skip a review for trivial diffs, or always fires. */
   skipPolicy: "agent-decides" | "always-fire";
-  /** Whether to ask the user before firing a required skill that wasn't explicitly invoked. */
-  askBeforeFiring: boolean;
 }
 
 /**
@@ -132,10 +128,8 @@ export const DEFAULT_BRIEFING_PROMPT =
 const DEFAULT_AUTO_REVIEW: AutoReviewConfig = {
   trigger: "manual",
   execution: "main-agent",
-  parallel: true,
   sessionBriefing: false,
   skipPolicy: "agent-decides",
-  askBeforeFiring: false,
 };
 
 const DEFAULT_CONFIG_BASE = {
@@ -251,12 +245,6 @@ function validateAutoReview(raw: unknown): AutoReviewConfig {
     }
     out.execution = raw.execution;
   }
-  if ("parallel" in raw) {
-    if (typeof raw.parallel !== "boolean") {
-      throw new Error(`Invalid ${CONFIG_PATH}: autoReview.parallel must be a boolean`);
-    }
-    out.parallel = raw.parallel;
-  }
   if ("sessionBriefing" in raw) {
     if (typeof raw.sessionBriefing !== "boolean") {
       throw new Error(`Invalid ${CONFIG_PATH}: autoReview.sessionBriefing must be a boolean`);
@@ -270,12 +258,6 @@ function validateAutoReview(raw: unknown): AutoReviewConfig {
       );
     }
     out.skipPolicy = raw.skipPolicy;
-  }
-  if ("askBeforeFiring" in raw) {
-    if (typeof raw.askBeforeFiring !== "boolean") {
-      throw new Error(`Invalid ${CONFIG_PATH}: autoReview.askBeforeFiring must be a boolean`);
-    }
-    out.askBeforeFiring = raw.askBeforeFiring;
   }
   return out;
 }
@@ -477,16 +459,14 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show briefingPrompt\`
   "briefingPrompt": null,
 
-  // Auto-review behaviour. Optional; defaults shown here. The default keeps
-  // review inline; opt into subagent execution only when the extra
-  // orchestration is worth it.
+  // Auto-review behaviour. Optional; the active defaults are shown here.
+  // The default keeps review inline; opt into subagent execution only when
+  // the extra orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
     "execution": "main-agent",
-    "parallel": true,
     "sessionBriefing": false,
-    "skipPolicy": "agent-decides",
-    "askBeforeFiring": false
+    "skipPolicy": "agent-decides"
   },
 
   // Per-context overrides. Each rule's \`match\` array OR's together;

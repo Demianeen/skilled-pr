@@ -60,7 +60,7 @@
           "type": "string",
           "enum": ["manual", "on-push"],
           "default": "manual",
-          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = automatic via PR #2's GH Action.",
+          "description": "When the gate fires. \"manual\" = only when the user invokes a skill; \"on-push\" = local Claude Code hook reminder after a non-dry-run git push. Codex has no Bash hook, so Codex remains manual.",
           "examples": ["manual", "on-push"]
         },
         "execution": {
@@ -69,11 +69,6 @@
           "default": "main-agent",
           "description": "Where the skill runs. \"main-agent\" keeps the reminder inline in the current conversation; \"subagent\" launches an isolated review context.",
           "examples": ["main-agent", "subagent"]
-        },
-        "parallel": {
-          "type": "boolean",
-          "default": true,
-          "description": "Whether multiple required skills run in parallel (or serially)."
         },
         "sessionBriefing": {
           "type": "boolean",
@@ -85,11 +80,6 @@
           "enum": ["agent-decides", "always-fire"],
           "default": "agent-decides",
           "description": "Whether the agent may skip review on trivial diffs (\"agent-decides\") or must always run (\"always-fire\")."
-        },
-        "askBeforeFiring": {
-          "type": "boolean",
-          "default": false,
-          "description": "Ask the user before firing a required skill that wasn't explicitly invoked. Useful when you want manual control over which reviews run."
         }
       }
     },

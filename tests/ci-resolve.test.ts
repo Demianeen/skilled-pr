@@ -1,6 +1,10 @@
-import { describe, expect, test } from "vitest";
-import { formatResolution, parseCIResolveArgs } from "../src/ci-resolve";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { formatResolution, isFinalAttestationStatus, parseCIResolveArgs } from "../src/ci-resolve";
 import type { PRContext, ResolvedProfile } from "../src/resolve";
+import type { RunResult } from "../src/proc";
 
 describe("parseCIResolveArgs", () => {
   test("accepts --pr <num>", () => {
@@ -135,6 +139,190 @@ describe("formatResolution", () => {
       requiredSkills: [],
     });
     expect(out).toContain("requiredSkills:  []");
+  });
+});
+
+describe("isFinalAttestationStatus", () => {
+  test("does not treat ci-resolve bypass success as a final attestation", () => {
+    expect(
+      isFinalAttestationStatus({
+        state: "success",
+        description: "Not required for this PR (rule: release-bypass).",
+      }),
+    ).toBe(false);
+  });
+
+  test("does not treat ci-resolve CTA statuses as final attestations", () => {
+    expect(
+      isFinalAttestationStatus({
+        state: "success",
+        description: "Invoke /review in Claude Code or Codex to complete this gate.",
+      }),
+    ).toBe(false);
+  });
+
+  test("treats final skill status descriptions as attestations", () => {
+    expect(isFinalAttestationStatus({ state: "success", description: "review: no findings" })).toBe(
+      true,
+    );
+    expect(isFinalAttestationStatus({ state: "failure", description: "review: 1 error" })).toBe(
+      true,
+    );
+  });
+
+  test("preserves unknown final statuses rather than overwriting them", () => {
+    expect(isFinalAttestationStatus({ state: "success", description: null })).toBe(true);
+  });
+
+  test("does not treat pending as a final attestation", () => {
+    expect(
+      isFinalAttestationStatus({
+        state: "pending",
+        description: "Invoke /review in Claude Code or Codex to complete this gate.",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("ciResolve --post", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+    vi.doUnmock("../src/proc");
+  });
+
+  function ok(stdout = ""): RunResult {
+    return { stdout, stderr: "", exitCode: 0 };
+  }
+
+  function withConfigCwd(): string {
+    const tmp = mkdtempSync(join(tmpdir(), "skilled-pr-ci-resolve-"));
+    mkdirSync(join(tmp, ".skilledpr"));
+    writeFileSync(
+      join(tmp, ".skilledpr", "config.jsonc"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          requiredSkills: ["review"],
+          statusName: "Skilled PR",
+          failOn: "error",
+          summaryPrompt: null,
+          briefingPrompt: null,
+          autoReview: {
+            trigger: "manual",
+            execution: "subagent",
+            parallel: true,
+            sessionBriefing: true,
+            skipPolicy: "agent-decides",
+            askBeforeFiring: false,
+          },
+          rules: [],
+        },
+        null,
+        2,
+      ),
+    );
+    return tmp;
+  }
+
+  function mockPostFlow(existingStatuses: unknown[]): ReturnType<typeof vi.fn> {
+    return vi.fn((args: string[]): RunResult => {
+      if (args[0] === "git" && args[1] === "remote" && args[2] === "get-url") {
+        return ok("git@github.com:Demianeen/skilled-pr.git\n");
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/pulls/1"
+      ) {
+        return ok(
+          JSON.stringify({
+            head: { ref: "feat/skilled-pr", sha: "abc123" },
+            user: { login: "Demianeen" },
+            labels: [],
+          }),
+        );
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/commits/abc123/statuses"
+      ) {
+        return ok(JSON.stringify(existingStatuses));
+      }
+      if (
+        args[0] === "gh" &&
+        args[1] === "api" &&
+        args[2] === "repos/Demianeen/skilled-pr/statuses/abc123"
+      ) {
+        return ok();
+      }
+      throw new Error(`unexpected command: ${JSON.stringify(args)}`);
+    });
+  }
+
+  async function loadMockedCIResolve(runMock: ReturnType<typeof vi.fn>) {
+    vi.resetModules();
+    vi.doMock("../src/proc", () => ({ run: runMock }));
+    return import("../src/ci-resolve");
+  }
+
+  test("replaces an old ci-resolve bypass success when this PR now requires review", async () => {
+    const previousCwd = process.cwd();
+    const tmp = withConfigCwd();
+    const runMock = mockPostFlow([
+      {
+        context: "Skilled PR / review",
+        state: "success",
+        description: "Not required for this PR (rule: release-bypass).",
+      },
+    ]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    process.chdir(tmp);
+    try {
+      const { ciResolve } = await loadMockedCIResolve(runMock);
+
+      await ciResolve(["--pr", "1", "--post"]);
+
+      const statusPost = runMock.mock.calls.find(
+        ([args]) => args[2] === "repos/Demianeen/skilled-pr/statuses/abc123",
+      )?.[0];
+      expect(statusPost).toContain("state=pending");
+      expect(statusPost).toContain("context=Skilled PR / review");
+      expect(statusPost).toContain(
+        "description=Invoke /review in Claude Code or Codex to complete this gate.",
+      );
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves a real review attestation untouched", async () => {
+    const previousCwd = process.cwd();
+    const tmp = withConfigCwd();
+    const runMock = mockPostFlow([
+      {
+        context: "Skilled PR / review",
+        state: "success",
+        description: "review: no findings",
+      },
+    ]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    process.chdir(tmp);
+    try {
+      const { ciResolve } = await loadMockedCIResolve(runMock);
+
+      await ciResolve(["--pr", "1", "--post"]);
+
+      const postCalls = runMock.mock.calls.filter(
+        ([args]) => args[2] === "repos/Demianeen/skilled-pr/statuses/abc123",
+      );
+      expect(postCalls).toHaveLength(0);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

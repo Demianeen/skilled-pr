@@ -27,7 +27,7 @@
 
 import { collectAllSkillNames, loadConfig, type SkilledPRConfig } from "./config";
 import { run } from "./proc";
-import { parseGitHubRemote, buildStatusContext, classifyGhError } from "./github";
+import { parseGitHubRemote, buildStatusContext, classifyGhError, type GitHubRemote } from "./github";
 import { resolveProfile, type PRContext, type ResolvedProfile } from "./resolve";
 
 // ---------------------------------------------------------------------------
@@ -162,30 +162,60 @@ function getRemote() {
 // Status posting
 // ---------------------------------------------------------------------------
 
+export interface ExistingStatus {
+  state: string;
+  description: string | null;
+}
+
 /**
- * Check whether any skilled-pr status check is already posted for this
- * sha + context. If yes, the agent has already attested (or a previous
- * workflow run posted pending); we don't want to overwrite that.
- *
- * Returns the existing status's state, or null if none found.
+ * Fetch latest statuses for this sha, keyed by context. GitHub returns
+ * commit statuses newest first, so the first context match is the one the
+ * PR gate currently exposes to users.
  */
-function existingStatusState(sha: string, context: string): string | null {
-  const remote = getRemote();
-  if (!remote) return null;
+function existingStatusesByContext(remote: GitHubRemote, sha: string): Map<string, ExistingStatus> {
   const result = run([
     "gh",
     "api",
     `repos/${remote.owner}/${remote.repo}/commits/${sha}/statuses`,
   ]);
-  if (result.exitCode !== 0) return null;
+  const byContext = new Map<string, ExistingStatus>();
+  if (result.exitCode !== 0) return byContext;
   try {
-    const statuses = JSON.parse(result.stdout) as Array<{ context: string; state: string }>;
-    // GH returns most recent first; first match wins.
-    const latest = statuses.find((s) => s.context === context);
-    return latest?.state ?? null;
+    const statuses = JSON.parse(result.stdout) as Array<{
+      context?: unknown;
+      state?: unknown;
+      description?: unknown;
+    }>;
+    for (const status of statuses) {
+      if (typeof status.context !== "string" || typeof status.state !== "string") continue;
+      if (byContext.has(status.context)) continue;
+      byContext.set(status.context, {
+        state: status.state,
+        description: typeof status.description === "string" ? status.description : null,
+      });
+    }
+    return byContext;
   } catch {
-    return null;
+    return byContext;
   }
+}
+
+function isCIResolveDescription(description: string | null | undefined): boolean {
+  return (
+    typeof description === "string" &&
+    (description.startsWith("Invoke /") || description.startsWith("Not required for this PR"))
+  );
+}
+
+/**
+ * `ci-resolve` may replace statuses that it previously posted, because
+ * labels or branch rules can change for the same commit SHA. It must not
+ * replace a real skill attestation, which owns final success/failure.
+ */
+export function isFinalAttestationStatus(status: ExistingStatus | undefined): boolean {
+  if (!status) return false;
+  if (status.state !== "success" && status.state !== "failure") return false;
+  return !isCIResolveDescription(status.description);
 }
 
 /**
@@ -255,13 +285,12 @@ export function planStatusPosts(
 
 /** Post a commit status. Wraps the gh api call; returns true on success. */
 function postStatus(
+  remote: GitHubRemote,
   sha: string,
   context: string,
   state: "success" | "pending",
   description: string,
 ): boolean {
-  const remote = getRemote();
-  if (!remote) return false;
   const result = run([
     "gh",
     "api",
@@ -371,16 +400,22 @@ export async function ciResolve(argv: string[]): Promise<void> {
   }
 
   const posts = planStatusPosts(config, profile);
+  const remote = getRemote();
+  if (!remote) {
+    console.error("Skilled PR: no GitHub remote configured for `origin`.");
+    process.exit(1);
+  }
+  const existingByContext = existingStatusesByContext(remote, context.sha);
   let pendingPosted = 0;
   let notRequiredPosted = 0;
   let attested = 0;
   for (const post of posts) {
-    const existing = existingStatusState(context.sha, post.context);
-    if (existing === "success" || existing === "failure") {
+    const existing = existingByContext.get(post.context);
+    if (isFinalAttestationStatus(existing)) {
       attested++;
       continue;
     }
-    if (postStatus(context.sha, post.context, post.state, post.description)) {
+    if (postStatus(remote, context.sha, post.context, post.state, post.description)) {
       if (post.state === "pending") pendingPosted++;
       else notRequiredPosted++;
     }

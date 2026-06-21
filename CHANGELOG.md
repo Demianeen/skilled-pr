@@ -5,6 +5,21 @@ All notable changes to `skilled-pr` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/Demianeen/skilled-pr/compare/v0.4.0...v0.5.0) (2026-06-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* configs at .skilledpr.jsonc are no longer loaded. Move to .skilledpr/config.jsonc and add `"schemaVersion": 1`, or run `skilled-pr init` to regenerate.
+* drop inline PR comments; add summaryPrompt for skill-rendered artifact comments ([#11](https://github.com/Demianeen/skilled-pr/issues/11))
+
+### Features
+
+* add Codex hook support alongside Claude Code ([#7](https://github.com/Demianeen/skilled-pr/issues/7)) ([f8b49f9](https://github.com/Demianeen/skilled-pr/commit/f8b49f98662be293519f607dbd2ed2adf28ea1dc))
+* drop inline PR comments; add summaryPrompt for skill-rendered artifact comments ([#11](https://github.com/Demianeen/skilled-pr/issues/11)) ([3a96116](https://github.com/Demianeen/skilled-pr/commit/3a96116f06362991155e7d80767f83f29e806809))
+* migrate CLI + /skilled-pr-update skill (stacked on [#15](https://github.com/Demianeen/skilled-pr/issues/15)) ([#16](https://github.com/Demianeen/skilled-pr/issues/16)) ([43e5d0a](https://github.com/Demianeen/skilled-pr/commit/43e5d0a39f76697ee45209cdb5cdb44c0311b18c))
+* restructure config to v1 schema in .skilledpr/ directory ([#15](https://github.com/Demianeen/skilled-pr/issues/15)) ([b53931f](https://github.com/Demianeen/skilled-pr/commit/b53931f0c0fbb44e3b16fcbfac0fb6e33ba91730))
+
 ## [Unreleased]
 
 ### ⚠ BREAKING CHANGES

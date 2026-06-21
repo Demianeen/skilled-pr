@@ -622,6 +622,19 @@ describe("classifyBranchProtection", () => {
     expect(r.detail).toContain("Skilled PR / review");
   });
 
+  test("protection missing rule-required contexts → warn with enable-gate fix", () => {
+    const response = JSON.stringify({
+      required_status_checks: { contexts: ["Skilled PR / review"] },
+    });
+    const r = classifyBranchProtection(response, 0, "Skilled PR", [
+      "Skilled PR / review",
+      "Skilled PR / cso",
+    ]);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("missing required check(s): Skilled PR / cso");
+    expect(r.fix).toBe("skilled-pr enable-gate");
+  });
+
   test("multiple Skilled PR checks (multiple required skills) → pass with count", () => {
     const response = JSON.stringify({
       required_status_checks: {

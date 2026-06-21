@@ -13,8 +13,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { run } from "./proc";
-import { parseGitHubRemote, type GitHubRemote } from "./github";
+import { buildStatusContext, parseGitHubRemote, type GitHubRemote } from "./github";
 import {
+  collectAllSkillNames,
   CONFIG_PATH,
   CURRENT_SCHEMA_VERSION,
   LEGACY_CONFIG_PATH,
@@ -710,6 +711,7 @@ export function classifyBranchProtection(
   apiResponse: string | null,
   exitCode: number,
   statusName: string,
+  expectedContexts: string[] = [],
 ): CheckResult {
   if (exitCode !== 0 || apiResponse === null) {
     // The api call fails with 404 when branch protection isn't enabled at
@@ -744,6 +746,16 @@ export function classifyBranchProtection(
       name: "Branch protection",
       status: "warn",
       detail: `protection exists but no required check matches "${statusName} / *"`,
+      fix: "skilled-pr enable-gate",
+      why: WHY_BRANCH_PROTECTION,
+    };
+  }
+  const missing = expectedContexts.filter((context) => !required.includes(context));
+  if (missing.length > 0) {
+    return {
+      name: "Branch protection",
+      status: "warn",
+      detail: `missing required check(s): ${missing.join(", ")}`,
       fix: "skilled-pr enable-gate",
       why: WHY_BRANCH_PROTECTION,
     };
@@ -1086,6 +1098,12 @@ export async function doctor(args: string[] = []) {
     ]).stdout?.trim() ?? "main";
 
     const statusName = parsedConfig?.statusName ?? "Skilled PR";
+    const expectedContexts =
+      parsedConfig === null
+        ? []
+        : collectAllSkillNames(parsedConfig).map((skill) =>
+            buildStatusContext(parsedConfig.statusName, skill),
+          );
 
     const protectionResult = tryRun([
       "gh",
@@ -1097,6 +1115,7 @@ export async function doctor(args: string[] = []) {
         protectionResult.stdout,
         protectionResult.exitCode,
         statusName,
+        expectedContexts,
       ),
     );
   } else {

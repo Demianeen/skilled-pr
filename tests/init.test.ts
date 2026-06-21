@@ -9,6 +9,7 @@ import {
   ensureGitignoreEntry,
   type ClaudeSettings,
 } from "../src/init";
+import { mergeOnPushBashHook } from "../src/harness";
 
 const SKILLED_PR_CMD = "skilled-pr hook";
 
@@ -100,6 +101,21 @@ describe("mergeSkilledPRHooks", () => {
     expect(countSkilledPREntries(out, "UserPromptExpansion")).toBe(1);
   });
 
+  test("idempotent across PostToolUse matchers: prior Bash entry doesn't suppress Skill add", () => {
+    const partial: ClaudeSettings = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+      },
+    };
+    const out = mergeSkilledPRHooks(partial);
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(2);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Bash")).toBe(true);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Skill")).toBe(true);
+    expect(countSkilledPREntries(out, "UserPromptExpansion")).toBe(1);
+  });
+
   test("does not mutate the input settings object", () => {
     const existing: ClaudeSettings = {
       hooks: {
@@ -123,6 +139,40 @@ describe("mergeSkilledPRHooks", () => {
     };
     const out = mergeSkilledPRHooks(existing);
     expect(out.hooks!.PostToolUse).not.toBe(existing.hooks!.PostToolUse);
+  });
+});
+
+describe("mergeOnPushBashHook", () => {
+  test("from null settings, adds PostToolUse:Bash only", () => {
+    const out = mergeOnPushBashHook(null);
+    expect(out.hooks?.PostToolUse).toHaveLength(1);
+    expect(out.hooks?.PostToolUse?.[0].matcher).toBe("Bash");
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(1);
+    expect(out.hooks?.UserPromptExpansion).toBeUndefined();
+  });
+
+  test("existing PostToolUse:Skill does not suppress PostToolUse:Bash", () => {
+    const existing: ClaudeSettings = {
+      hooks: {
+        PostToolUse: [
+          { matcher: "Skill", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+        UserPromptExpansion: [
+          { matcher: "", hooks: [{ type: "command", command: SKILLED_PR_CMD }] },
+        ],
+      },
+    };
+    const out = mergeOnPushBashHook(existing);
+    expect(countSkilledPREntries(out, "PostToolUse")).toBe(2);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Skill")).toBe(true);
+    expect(out.hooks?.PostToolUse?.some((e) => e.matcher === "Bash")).toBe(true);
+  });
+
+  test("idempotent: re-running does not duplicate PostToolUse:Bash", () => {
+    const once = mergeOnPushBashHook(mergeSkilledPRHooks(null));
+    const twice = mergeOnPushBashHook(once);
+    expect(countSkilledPREntries(twice, "PostToolUse")).toBe(2);
+    expect(twice.hooks?.PostToolUse?.filter((e) => e.matcher === "Bash")).toHaveLength(1);
   });
 });
 

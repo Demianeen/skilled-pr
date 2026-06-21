@@ -485,6 +485,8 @@ export function generateDefaultConfig(): string {
     // "manual": only when the user invokes a required skill.
     // "on-push": Claude Code reminder after git push. Codex has no
     // PostToolUse:Bash event, so Codex users keep invoking skills manually.
+    // If you change an initialized repo to "on-push", re-run
+    // \`skilled-pr init --for claude\` to add the Claude Bash hook.
     "trigger": "manual",
     "execution": "subagent",
     "parallel": true,

@@ -2,9 +2,11 @@
 //
 // Claude Code hook writer. Targets `.claude/settings.json`.
 //
-// Wires two hook events:
+// Wires two default hook events:
 //   - PostToolUse matcher "Skill"     (model-invoked path: agent runs Skill tool)
 //   - UserPromptExpansion matcher ""   (user-typed path: user types /skill-name)
+// `autoReview.trigger=on-push` adds a third, opt-in PostToolUse matcher
+// for "Bash" so the agent sees a review reminder after `git push`.
 //
 // Both invoke `skilled-pr hook` on stdin/stdout. The merge preserves any
 // other hooks/settings the user already has.
@@ -30,7 +32,8 @@ export interface ClaudeSettings {
 /**
  * Add skilled-pr's PostToolUse + UserPromptExpansion hooks to a Claude
  * settings object, preserving all other settings. Idempotent: if an entry
- * already invokes `skilled-pr hook` for an event, it's left alone.
+ * already invokes `skilled-pr hook` for the same event + matcher, it's left
+ * alone.
  *
  * Exported pure for tests; the harness adapter below uses it.
  */
@@ -68,6 +71,7 @@ function ensureSkilledPRHook(
 ) {
   const entries = hooks[event] ?? [];
   const alreadyPresent = entries.some((e) =>
+    (e.matcher ?? "") === matcher &&
     e.hooks?.some((h) => h.command === SKILLED_PR_HOOK_COMMAND),
   );
   if (alreadyPresent) {

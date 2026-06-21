@@ -60,7 +60,7 @@
           "type": "string",
           "enum": ["manual", "on-push"],
           "default": "manual",
-          "description": "When review reminders fire. \"manual\" = only when the user invokes a required skill; \"on-push\" = Claude Code only: after an agent runs git push through Bash, inject a reminder to invoke the required skill(s). Codex has no PostToolUse:Bash event and stays manual.",
+          "description": "When review reminders fire. \"manual\" = only when the user invokes a required skill; \"on-push\" = Claude Code only: after an agent runs git push through Bash, inject a reminder to invoke the required skill(s). Codex has no PostToolUse:Bash event and stays manual. After changing an initialized repo to \"on-push\", re-run skilled-pr init --for claude so .claude/settings.json gets the Bash hook.",
           "examples": ["manual", "on-push"]
         },
         "execution": {

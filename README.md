@@ -123,6 +123,8 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   // Auto-review reminders. "manual" fires only when a required skill is
   // invoked. "on-push" adds a Claude Code reminder after an agent runs
   // git push; Codex has no PostToolUse:Bash event and stays manual.
+  // If you change an initialized repo to "on-push", re-run
+  // `skilled-pr init --for claude` to add the Claude Bash hook.
   "autoReview": {
     "trigger": "manual",
     "execution": "subagent",

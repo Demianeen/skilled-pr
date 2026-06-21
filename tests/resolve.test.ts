@@ -456,7 +456,10 @@ describe("formatReminder — subagent execution mode", () => {
     expect(r).toContain("{{constraints}}");
     expect(r).toContain("{{decisions}}");
     expect(r).toContain("{{exclusions}}");
-    expect(r).toContain("fill each remaining {{slot}}");
+    expect(r).toContain("Before spawning the subagent, fill each {{slot}}");
+    expect(r.indexOf("Before spawning the subagent")).toBeLessThan(
+      r.indexOf("The subagent's prompt should include"),
+    );
     expect(r).not.toContain("git diff <base>");
     // {{skill}} is substituted by the reminder builder before embedding,
     // so the rendered text should not contain the literal placeholder.

@@ -292,6 +292,12 @@ function formatSubagentReminder(
     lines.push(line);
   }
   lines.push("");
+  if (profile.sessionBriefing) {
+    lines.push(
+      "Before spawning the subagent, fill each {{slot}} in the briefing below (purpose / constraints / decisions / exclusions) with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\". The skill-name placeholder is already substituted.",
+    );
+    lines.push("");
+  }
   lines.push("The subagent's prompt should include:");
   lines.push("");
   lines.push("```");
@@ -308,10 +314,6 @@ function formatSubagentReminder(
     for (const line of briefingWithSkill.split("\n")) {
       lines.push(line);
     }
-    lines.push("");
-    lines.push(
-      "BEFORE spawning the subagent: fill each remaining {{slot}} above (purpose / constraints / decisions / exclusions) with a faithful summary of what the user said. Don't editorialize. If a slot has no content from the conversation, write \"(none stated)\". The skill-name placeholder is already substituted.",
-    );
     lines.push("");
   }
   lines.push("REVIEW INSTRUCTIONS:");

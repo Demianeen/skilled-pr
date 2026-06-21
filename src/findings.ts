@@ -94,7 +94,7 @@ export { findingsSchemaForPrompt } from "./findings-prompt";
 // Artifact summary comment (per-skill, top-level on the PR)
 //
 // The skill renders the body itself, following the project's `summaryPrompt`
-// (in .skilledpr.jsonc). skilled-pr doesn't have a built-in formatter: the
+// (in .skilledpr/config.jsonc). skilled-pr doesn't have a built-in formatter: the
 // skill knows its own domain (typo-check, security review, French
 // translation, ...) and can produce a summary that suits it. attest just
 // posts the rendered file verbatim (with the artifact marker appended).

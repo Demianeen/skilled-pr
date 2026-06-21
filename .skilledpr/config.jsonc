@@ -40,9 +40,9 @@
   //   `skilled-pr show briefingPrompt`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. The default keeps review inline; opt into subagent
-  // execution only when the extra orchestration is worth it.
+  // Auto-review behaviour. Optional; defaults shown here. The default keeps
+  // review inline; opt into subagent execution only when the extra
+  // orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
     "execution": "main-agent",

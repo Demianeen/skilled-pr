@@ -54,7 +54,7 @@
     "autoReview": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Auto-review behaviour (PR #4). All fields optional with built-in defaults.",
+      "description": "Auto-review behaviour. All fields optional with built-in defaults.",
       "properties": {
         "trigger": {
           "type": "string",

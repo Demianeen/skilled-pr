@@ -5,7 +5,7 @@
 // Skilled PR status checks as required. One command replaces five clicks.
 //
 // Strategy:
-//   1. Read `.skilledpr.jsonc` for requiredSkills + statusName
+//   1. Read `.skilledpr/config.jsonc` for requiredSkills + statusName
 //   2. Build the expected contexts list (e.g. `Skilled PR / review`)
 //   3. GET the existing protection on the default branch
 //      - If 404 (no protection) → PUT a minimal protection with our contexts

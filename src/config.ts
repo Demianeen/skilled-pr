@@ -13,10 +13,9 @@ import type { FailOn } from "./findings";
 export const CURRENT_SCHEMA_VERSION = 1 as const;
 
 /**
- * Auto-review behaviour. Optional in v1 — every field defaults to a
- * sensible value if missing. PR #4 (auto-review) implements the actual
- * behaviour gated by these flags; in PR #1 the fields just need to parse
- * cleanly and round-trip through `show` so users can see what's enabled.
+ * Auto-review behaviour. Optional in v1 - every field defaults to a
+ * sensible value if missing. The defaults keep review inline and make
+ * subagent orchestration explicit opt-in.
  */
 export interface AutoReviewConfig {
   /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = automatic via PR #2's GH Action. */
@@ -86,14 +85,14 @@ export interface SkilledPRConfig {
    */
   summaryPrompt: string | null;
   /**
-   * Session-briefing prompt used by PR #4's auto-review when launching a
-   * subagent. `null` resolves to DEFAULT_BRIEFING_PROMPT. Like
+   * Session-briefing prompt used when auto-review launches a subagent.
+   * `null` resolves to DEFAULT_BRIEFING_PROMPT. Like
    * summaryPrompt, this is the contract that lets one transport serve
    * many domains: the orchestrator fills in slots, the prompt rephrases
    * for the spawned agent.
    */
   briefingPrompt: string | null;
-  /** Auto-review behaviour for PR #4. Optional; defaults baked in here. */
+  /** Auto-review behaviour. Optional; defaults baked in here. */
   autoReview: AutoReviewConfig;
   /** Per-context rule overlays. Evaluated in order; first match wins. */
   rules: Rule[];
@@ -111,7 +110,7 @@ export const DEFAULT_SUMMARY_PROMPT =
   "Keep it scannable. The reviewer should see the count and gate at a glance, then click into individual findings for detail.";
 
 /**
- * Built-in default `briefingPrompt`. Slot-fill template used by PR #4's
+ * Built-in default `briefingPrompt`. Slot-fill template used by the
  * auto-review subagent launcher. Each `{{slot}}` is filled by the
  * orchestrator from the active session context (purpose, constraints,
  * decisions, exclusions). Resolves at runtime when config sets
@@ -478,9 +477,9 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show briefingPrompt\`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. The default keeps review inline; opt into subagent
-  // execution only when the extra orchestration is worth it.
+  // Auto-review behaviour. Optional; defaults shown here. The default keeps
+  // review inline; opt into subagent execution only when the extra
+  // orchestration is worth it.
   "autoReview": {
     "trigger": "manual",
     "execution": "main-agent",

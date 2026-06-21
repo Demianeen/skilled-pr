@@ -14,9 +14,8 @@ export const CURRENT_SCHEMA_VERSION = 1 as const;
 
 /**
  * Auto-review behaviour. Optional in v1 — every field defaults to a
- * sensible value if missing. PR #4 (auto-review) implements the actual
- * behaviour gated by these flags; in PR #1 the fields just need to parse
- * cleanly and round-trip through `show` so users can see what's enabled.
+ * sensible value if missing. The hook uses these flags to decide when to
+ * remind agents to run required review skills.
  */
 export interface AutoReviewConfig {
   /** When review reminders fire. "manual" = user invokes a skill; "on-push" = Claude Code git-push reminder. Codex has no Bash post-tool event and remains manual. */
@@ -86,14 +85,14 @@ export interface SkilledPRConfig {
    */
   summaryPrompt: string | null;
   /**
-   * Session-briefing prompt used by PR #4's auto-review when launching a
+   * Session-briefing prompt used by auto-review when launching a
    * subagent. `null` resolves to DEFAULT_BRIEFING_PROMPT. Like
    * summaryPrompt, this is the contract that lets one transport serve
    * many domains: the orchestrator fills in slots, the prompt rephrases
    * for the spawned agent.
    */
   briefingPrompt: string | null;
-  /** Auto-review behaviour for PR #4. Optional; defaults baked in here. */
+  /** Auto-review behaviour. Optional; defaults baked in here. */
   autoReview: AutoReviewConfig;
   /** Per-context rule overlays. Evaluated in order; first match wins. */
   rules: Rule[];
@@ -111,7 +110,7 @@ export const DEFAULT_SUMMARY_PROMPT =
   "Keep it scannable. The reviewer should see the count and gate at a glance, then click into individual findings for detail.";
 
 /**
- * Built-in default `briefingPrompt`. Slot-fill template used by PR #4's
+ * Built-in default `briefingPrompt`. Slot-fill template used by the
  * auto-review subagent launcher. Each `{{slot}}` is filled by the
  * orchestrator from the active session context (purpose, constraints,
  * decisions, exclusions). Resolves at runtime when config sets
@@ -468,7 +467,7 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show summaryPrompt\`
   "summaryPrompt": null,
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
+  // Session-briefing prompt used by auto-review when launching a
   // subagent. null → uses the built-in slot-fill template. Override only
   // if you want a different way of relaying session context to the
   // reviewing agent.
@@ -477,9 +476,8 @@ export function generateDefaultConfig(): string {
   //   \`skilled-pr show briefingPrompt\`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // Auto-review behaviour. Optional; defaults shown here. All fields
+  // are independent - change one without changing the others.
   "autoReview": {
     // "manual": only when the user invokes a required skill.
     // "on-push": Claude Code reminder after git push. Codex has no

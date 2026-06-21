@@ -637,6 +637,7 @@ describe("doctor() harness guidance", () => {
     expect(report).toContain("on-push Bash hook");
     expect(report).toContain("Codex has no PostToolUse:Bash event");
     expect(report).toContain("set autoReview.trigger to manual");
+    expect(report).toMatch(/✗ on-push Bash hook\s+autoReview\.trigger=on-push/);
     expect(report).not.toContain("autoReview.trigger=on-push but .claude/settings.json not found");
   });
 });

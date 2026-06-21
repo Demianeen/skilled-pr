@@ -51,13 +51,13 @@
     "briefingPrompt": {
       "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
       "default": null,
-      "description": "Slot-fill template used by auto-review (PR #4) when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
+      "description": "Slot-fill template used by auto-review when launching a reviewing subagent. Substitutes {{purpose}}, {{constraints}}, {{decisions}}, {{exclusions}}, {{skill}}. null → built-in default (see DEFAULT_BRIEFING_PROMPT in src/config.ts).",
       "examples": [null]
     },
     "autoReview": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Auto-review behaviour (PR #4). All fields optional with built-in defaults.",
+      "description": "Auto-review behaviour. All fields optional with built-in defaults.",
       "properties": {
         "trigger": {
           "type": "string",

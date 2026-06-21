@@ -53,6 +53,10 @@ describe("isGitPushInvocation", () => {
     expect(isGitPushInvocation("cd /repo && git push")).toBe(true);
   });
 
+  test("with git -C global option", () => {
+    expect(isGitPushInvocation("git -C /repo push")).toBe(true);
+  });
+
   test("rejects `git push --dry-run`", () => {
     expect(isGitPushInvocation("git push --dry-run")).toBe(false);
   });
@@ -76,6 +80,17 @@ describe("isGitPushInvocation", () => {
 
   test("rejects pipeline commands AFTER chdir strip", () => {
     expect(isGitPushInvocation("cd /repo && git push | tee log")).toBe(false);
+  });
+
+  test("rejects multiline commands after push", () => {
+    expect(isGitPushInvocation("git push\nprintf done")).toBe(false);
+  });
+
+  test("rejects common shell composition syntax around push", () => {
+    expect(isGitPushInvocation("git push || true")).toBe(false);
+    expect(isGitPushInvocation("git push &")).toBe(false);
+    expect(isGitPushInvocation("git push > log")).toBe(false);
+    expect(isGitPushInvocation("git push $(printf '')")).toBe(false);
   });
 
   test("rejects pipe-separated chdir prefixes", () => {

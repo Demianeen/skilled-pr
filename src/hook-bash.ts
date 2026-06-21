@@ -16,12 +16,13 @@
 import { loadConfig } from "./config";
 import { getCurrentPRContext, resolveProfile } from "./resolve";
 
-// Operators that compose multiple commands in a single bash invocation.
-// If any appear AFTER the leading-chdir strip, we treat the input as a
-// composite and bail out. Safer to false-negative here.
+// Operators and syntax that compose multiple operations in a single bash
+// invocation. If any appear AFTER the leading-chdir strip, we treat the
+// input as a composite and bail out. Safer to false-negative here.
 const SHELL_OP_AMP = "&&";
 const SHELL_OP_SEMI = ";";
 const SHELL_OP_PIPE = "|";
+const SHELL_OP_OR = "||";
 
 /**
  * Strip a leading `cd <path> [AMP|SEMI]` prefix from simple bash commands,
@@ -49,8 +50,9 @@ function findLeadingChdirSeparator(s: string): { idx: number; length: number } |
   return candidates[0];
 }
 
-function findFirstShellOp(s: string): number {
-  // Return the earliest occurrence of any shell composition operator.
+function findFirstCompositeSyntax(s: string): number {
+  // Return the earliest occurrence of shell composition syntax. This is
+  // intentionally conservative, not a full parser.
   const candidates: number[] = [];
   const a = s.indexOf(SHELL_OP_AMP);
   if (a !== -1) candidates.push(a);
@@ -58,8 +60,37 @@ function findFirstShellOp(s: string): number {
   if (b !== -1) candidates.push(b);
   const c = s.indexOf(SHELL_OP_PIPE);
   if (c !== -1) candidates.push(c);
+  const d = s.indexOf(SHELL_OP_OR);
+  if (d !== -1) candidates.push(d);
+  for (const token of ["\n", "\r", "&", "<", ">", "`", "$(", "(", ")"]) {
+    const idx = s.indexOf(token);
+    if (idx !== -1) candidates.push(idx);
+  }
   if (candidates.length === 0) return -1;
   return Math.min(...candidates);
+}
+
+function stripGitGlobalOptions(tokens: string[]): string[] {
+  const remaining = [...tokens];
+  while (remaining.length > 0) {
+    const current = remaining[0];
+    if (current === "-C" || current === "-c" || current === "--git-dir" || current === "--work-tree") {
+      if (remaining.length < 2) return remaining;
+      remaining.splice(0, 2);
+      continue;
+    }
+    if (
+      current.startsWith("--git-dir=") ||
+      current.startsWith("--work-tree=") ||
+      current.startsWith("--namespace=") ||
+      current.startsWith("--exec-path=")
+    ) {
+      remaining.shift();
+      continue;
+    }
+    return remaining;
+  }
+  return remaining;
 }
 
 /**
@@ -75,21 +106,25 @@ export function isGitPushInvocation(command: string): boolean {
   const stripped = stripLeadingChdir(command).trim();
 
   // Bail on commands that compose multiple operations after the chdir
-  // strip. The leading "git push" is what we want; pipelines could
+  // strip. The leading "git push" is what we want; pipelines, multiline
+  // commands, redirections, subshells, and background operators could
   // wrap it in arbitrary ways we can't reason about safely.
-  if (findFirstShellOp(stripped) !== -1) return false;
+  if (findFirstCompositeSyntax(stripped) !== -1) return false;
 
-  // Tokenize on whitespace and check the first two tokens.
+  // Tokenize on whitespace and check the git subcommand. Support common
+  // git global options that come before the subcommand, such as
+  // `git -C /repo push`.
   const tokens = stripped.split(/\s+/);
   if (tokens[0] !== "git") return false;
-  if (tokens[1] !== "push") return false;
+  const gitArgs = stripGitGlobalOptions(tokens.slice(1));
+  if (gitArgs[0] !== "push") return false;
 
   // Reject dry-runs (no actual remote state changes). Two forms:
   //   - Long: `--dry-run` or `--dry-run=server` (handled inline below)
   //   - Short: `-n` alone OR bundled (e.g. `-fn`, `-nv`, `-nfu`).
   //     git's getopt-style bundling means any single-dash token containing
   //     'n' includes the dry-run flag.
-  for (const t of tokens.slice(2)) {
+  for (const t of gitArgs.slice(1)) {
     if (t === "--dry-run" || t.startsWith("--dry-run=")) return false;
     if (t.length >= 2 && t.startsWith("-") && !t.startsWith("--") && t.includes("n")) {
       return false;

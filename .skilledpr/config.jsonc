@@ -31,7 +31,7 @@
   //   `skilled-pr show summaryPrompt`
   "summaryPrompt": null,
 
-  // Session-briefing prompt used by auto-review (PR #4) when launching a
+  // Session-briefing prompt used by auto-review when launching a
   // subagent. null → uses the built-in slot-fill template. Override only
   // if you want a different way of relaying session context to the
   // reviewing agent.
@@ -40,9 +40,8 @@
   //   `skilled-pr show briefingPrompt`
   "briefingPrompt": null,
 
-  // Auto-review behaviour (PR #4 will implement). Optional; defaults
-  // shown here. All fields are independent — change one without changing
-  // the others.
+  // Auto-review behaviour. Optional; defaults shown here. All fields
+  // are independent - change one without changing the others.
   "autoReview": {
     "trigger": "manual",
     "execution": "subagent",

@@ -13,6 +13,7 @@ import {
   classifyCodexVersion,
   classifyCodexHooks,
   classifyBranchProtection,
+  classifyBypassWorkflow,
   formatCheck,
   formatDoctorReport,
 } from "../src/doctor";
@@ -205,8 +206,16 @@ describe("classifySkilledPRConfig", () => {
   test("empty requiredSkills → warn (hook never fires)", () => {
     const r = classifySkilledPRConfig(`{ ${SV}, "requiredSkills": [] }`);
     expect(r.status).toBe("warn");
-    expect(r.detail).toContain("empty");
+    expect(r.detail).toContain("no skills are required anywhere");
     expect(r.fix).toContain("at least one skill");
+  });
+
+  test("rule-only requiredSkills → pass", () => {
+    const r = classifySkilledPRConfig(
+      `{ ${SV}, "requiredSkills": [], "rules": [{ "match": [{ "branch": "docs/*" }], "requiredSkills": ["review"] }] }`,
+    );
+    expect(r.status).toBe("pass");
+    expect(r.detail).toContain("review");
   });
 
   test("missing schemaVersion → fail with migration hint", () => {
@@ -651,6 +660,47 @@ describe("classifyBranchProtection", () => {
       required_status_checks: { contexts: ["My Custom Gate / review"] },
     });
     const r = classifyBranchProtection(response, 0, "My Custom Gate");
+    expect(r.status).toBe("pass");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyBypassWorkflow
+// ---------------------------------------------------------------------------
+
+describe("classifyBypassWorkflow", () => {
+  const ruleConfig = baseConfig({
+    rules: [{ match: [{ branch: "docs/*" }], requiredSkills: [] }],
+  });
+
+  test("skips when rules do not override requiredSkills", () => {
+    const r = classifyBypassWorkflow(null, baseConfig());
+    expect(r.status).toBe("skip");
+  });
+
+  test("warns when requiredSkills rules exist but workflow is missing", () => {
+    const r = classifyBypassWorkflow(null, ruleConfig);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain(".github/workflows/skilled-pr-bypass.yml not found");
+    expect(r.fix).toContain("commit and push");
+  });
+
+  test("warns when workflow lacks pull_request_target rule resolution", () => {
+    const r = classifyBypassWorkflow("name: stale\non: pull_request\n", ruleConfig);
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("missing expected v1 rule-status behavior");
+  });
+
+  test("passes when workflow can post rule statuses from the trusted base", () => {
+    const r = classifyBypassWorkflow(
+      [
+        "on:",
+        "  pull_request_target:",
+        "run: skilled-pr ci-resolve --post",
+        "ref: ${{ github.event.pull_request.base.ref }}",
+      ].join("\n"),
+      ruleConfig,
+    );
     expect(r.status).toBe("pass");
   });
 });

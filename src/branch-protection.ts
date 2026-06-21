@@ -332,8 +332,9 @@ function writeBypassWorkflowWithLog(): void {
     case "missing-template":
       console.warn(
         `⚠ Could not locate templates/skilled-pr-bypass.yml in the package. ` +
-          `${BYPASS_WORKFLOW_PATH} not written. The PR gate will still work via attest, ` +
-          `but bypass rules (requiredSkills: []) won't auto-succeed on CI.`,
+          `${BYPASS_WORKFLOW_PATH} not written. Rule-based bypasses and rules that ` +
+          `replace requiredSkills can leave PRs waiting on statuses until skilled-pr ` +
+          `is reinstalled and enable-gate is re-run.`,
       );
       break;
   }

@@ -444,6 +444,7 @@ export async function ciResolve(argv: string[]): Promise<void> {
   let notRequiredPosted = 0;
   let attested = 0;
   let upToDate = 0;
+  let failed = 0;
   for (const post of posts) {
     const existing = existingByContext.get(post.context);
     if (isFinalAttestationStatus(existing)) {
@@ -457,12 +458,22 @@ export async function ciResolve(argv: string[]): Promise<void> {
     if (postStatus(remote, context.sha, post.context, post.state, post.description)) {
       if (post.state === "pending") pendingPosted++;
       else notRequiredPosted++;
+    } else {
+      failed++;
     }
   }
   const sha7 = context.sha.slice(0, 7);
   const parts: string[] = [];
   if (pendingPosted > 0) parts.push(`${pendingPosted} pending CTA(s)`);
   if (notRequiredPosted > 0) parts.push(`${notRequiredPosted} not-required success(es)`);
+  if (failed > 0) {
+    const posted = parts.length > 0 ? `posted ${parts.join(" + ")}; ` : "";
+    console.error(
+      `Skilled PR: ${posted}failed to post ${failed} status(es) on ${sha7}. ` +
+        `The GitHub Action must fail so branch protection does not wait silently.`,
+    );
+    process.exit(1);
+  }
   if (parts.length === 0) {
     if (attested === posts.length) {
       console.log(`Skilled PR: all ${posts.length} context(s) already attested on ${sha7}.`);

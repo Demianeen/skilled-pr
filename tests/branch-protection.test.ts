@@ -235,6 +235,7 @@ describe("enableGate", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.doUnmock("../src/proc");
+    vi.doUnmock("../src/init");
     vi.resetModules();
     process.chdir(prevCwd);
     rmSync(tmp, { recursive: true, force: true });
@@ -294,6 +295,12 @@ describe("enableGate", () => {
       .join("\n");
   }
 
+  function warnedOutput(): string {
+    return (console.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => call.map(String).join(" "))
+      .join("\n");
+  }
+
   test("writes the bypass workflow after creating branch protection", async () => {
     const runMock = mockRunWithExistingContexts(null);
     const { enableGate } = await loadEnableGate(runMock);
@@ -322,5 +329,25 @@ describe("enableGate", () => {
     expect(loggedOutput()).toContain(
       `commit and push ${BYPASS_WORKFLOW_PATH} to your default branch`,
     );
+  });
+
+  test("missing template warning explains rule statuses can stay blocked", async () => {
+    const runMock = mockRunWithExistingContexts(["Skilled PR / review"]);
+    vi.resetModules();
+    vi.doMock("../src/proc", () => ({ run: runMock }));
+    vi.doMock("../src/init", () => ({
+      findBypassWorkflowSource: () => null,
+      writeFileWithMkdir: () => {
+        throw new Error("should not write");
+      },
+    }));
+    const { enableGate } = await import("../src/branch-protection");
+
+    await enableGate();
+
+    const warning = warnedOutput();
+    expect(warning).toContain("Rule-based bypasses");
+    expect(warning).toContain("replace requiredSkills");
+    expect(warning).toContain("waiting on statuses");
   });
 });

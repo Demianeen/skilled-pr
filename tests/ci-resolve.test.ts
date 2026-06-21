@@ -195,6 +195,10 @@ describe("ciResolve --post", () => {
     return { stdout, stderr: "", exitCode: 0 };
   }
 
+  function fail(stderr = "failed"): RunResult {
+    return { stdout: "", stderr, exitCode: 1 };
+  }
+
   function withConfigCwd(): string {
     const tmp = mkdtempSync(join(tmpdir(), "skilled-pr-ci-resolve-"));
     mkdirSync(join(tmp, ".skilledpr"));
@@ -225,7 +229,10 @@ describe("ciResolve --post", () => {
     return tmp;
   }
 
-  function mockPostFlow(existingStatuses: unknown[]): ReturnType<typeof vi.fn> {
+  function mockPostFlow(
+    existingStatuses: unknown[],
+    postResult: RunResult = ok(),
+  ): ReturnType<typeof vi.fn> {
     return vi.fn((args: string[]): RunResult => {
       if (args[0] === "git" && args[1] === "remote" && args[2] === "get-url") {
         return ok("git@github.com:Demianeen/skilled-pr.git\n");
@@ -255,7 +262,7 @@ describe("ciResolve --post", () => {
         args[1] === "api" &&
         args[2] === "repos/Demianeen/skilled-pr/statuses/abc123"
       ) {
-        return ok();
+        return postResult;
       }
       throw new Error(`unexpected command: ${JSON.stringify(args)}`);
     });
@@ -391,6 +398,34 @@ describe("ciResolve --post", () => {
       expect(output).toContain("could not fetch PR #1");
       expect(output).toContain("gh is not authenticated");
       expect(output).toContain("gh auth login");
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("exits nonzero when status posting fails", async () => {
+    const previousCwd = process.cwd();
+    const tmp = withConfigCwd();
+    const runMock = mockPostFlow([], fail("gh: Forbidden (HTTP 403)"));
+    const errored: string[] = [];
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation((msg) => {
+      errored.push(String(msg));
+      return undefined as unknown as void;
+    });
+    vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("__exit__");
+    }) as never);
+    process.chdir(tmp);
+    try {
+      const { ciResolve } = await loadMockedCIResolve(runMock);
+
+      await expect(ciResolve(["--pr", "1", "--post"])).rejects.toThrow(/__exit__/);
+
+      const output = errored.join("\n");
+      expect(output).toContain("failed to post 1 status");
+      expect(output).toContain("must fail");
     } finally {
       process.chdir(previousCwd);
       rmSync(tmp, { recursive: true, force: true });

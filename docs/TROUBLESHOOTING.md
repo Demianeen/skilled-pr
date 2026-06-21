@@ -146,9 +146,9 @@ The `Skilled PR / <skill>` status check posts on every attest, but branch protec
 skilled-pr enable-gate
 ```
 
-This adds the Skilled PR status check to your default branch's protection rules. Additive — preserves any existing rules (PR review requirements, admin enforcement, push restrictions).
+This adds the Skilled PR status checks to your default branch's protection rules and writes `.github/workflows/skilled-pr-bypass.yml`. Commit and push that workflow to the default branch so rule-based bypasses and subset rules can post their "not required" statuses. The branch-protection change is additive and preserves any existing rules (PR review requirements, admin enforcement, push restrictions).
 
-**Manual path:** Repository Settings → Branches → Branch protection rules → Add rule for your default branch → Require status checks to pass → Search for "Skilled PR" → Add it.
+**Manual path:** Repository Settings → Branches → Branch protection rules → Add rule for your default branch → Require status checks to pass → Search for "Skilled PR" → Add each required context. If your config has rules that override `requiredSkills`, also add an equivalent workflow that runs `skilled-pr ci-resolve --post` from the trusted base branch.
 
 ## Hook fires too often / not often enough
 

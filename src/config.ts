@@ -19,7 +19,7 @@ export const CURRENT_SCHEMA_VERSION = 1 as const;
  * cleanly and round-trip through `show` so users can see what's enabled.
  */
 export interface AutoReviewConfig {
-  /** When the gate fires. "manual" = only when the user invokes a skill; "on-push" = automatic via PR #2's GH Action. */
+  /** When review reminders fire. "manual" = user invokes a skill; "on-push" = Claude Code git-push reminder. Codex has no Bash post-tool event and remains manual. */
   trigger: "manual" | "on-push";
   /** Where the skill runs. "subagent" = isolated context; "main-agent" = inline in the orchestrator. */
   execution: "subagent" | "main-agent";
@@ -482,6 +482,9 @@ export function generateDefaultConfig(): string {
   // shown here. All fields are independent — change one without changing
   // the others.
   "autoReview": {
+    // "manual": only when the user invokes a required skill.
+    // "on-push": Claude Code reminder after git push. Codex has no
+    // PostToolUse:Bash event, so Codex users keep invoking skills manually.
     "trigger": "manual",
     "execution": "subagent",
     "parallel": true,

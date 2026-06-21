@@ -120,6 +120,18 @@ That's the entire setup. Three commands. No CI workflow files to write, no secre
   // See `skilled-pr show summaryPrompt` for the rendered value.
   "summaryPrompt": null,
 
+  // Auto-review reminders. "manual" fires only when a required skill is
+  // invoked. "on-push" adds a Claude Code reminder after an agent runs
+  // git push; Codex has no PostToolUse:Bash event and stays manual.
+  "autoReview": {
+    "trigger": "manual",
+    "execution": "subagent",
+    "parallel": true,
+    "sessionBriefing": true,
+    "skipPolicy": "agent-decides",
+    "askBeforeFiring": false
+  },
+
   // Per-context rule overlays. First matching rule wins; match blocks
   // OR together, keys within a block (branch + author + labels) AND.
   // Optional override fields fall back to the top-level when absent.

@@ -119,20 +119,18 @@ export function buildOnPushReminder(
     return lines.join("\n");
   }
   // agent-decides
+  lines.push(`Decide whether this push introduced review-worthy changes since the last attested review.`);
+  lines.push("");
   lines.push(
-    `Decide: is this push net-new work, or a fix-up of findings from the most recent review (or general housekeeping)?`,
+    `If it includes new source, tests, docs, config, behavior, or setup changes, invoke ${skillsList}. Each skill fires its own attestation reminder when loaded.`,
   );
   lines.push("");
   lines.push(
-    `If NEW work, invoke ${skillsList}. Each skill fires its own attestation reminder when loaded.`,
-  );
-  lines.push("");
-  lines.push(
-    `If FIX-UP or housekeeping, print EXACTLY this block to the user, then do NOT invoke a review skill:`,
+    `If it only fixes findings from the most recent review, retries attestation, or publishes unchanged metadata, print EXACTLY this block to the user, then do NOT invoke a review skill:`,
   );
   lines.push("");
   lines.push("  ⏭️  Skilled PR auto-review: skipped");
-  lines.push("  Reason: <one sentence — what the recent turns were doing>");
+  lines.push("  Reason: <one sentence - what the recent turns were doing>");
   lines.push("  To force a fresh review, invoke the review skill manually.");
   lines.push("");
   lines.push("Be conservative: if uncertain, run the review.");

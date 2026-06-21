@@ -118,8 +118,8 @@ describe("buildOnPushReminder", () => {
   test("agent-decides policy: includes the decide block and skip block", () => {
     const out = buildOnPushReminder(["review"], "agent-decides");
     expect(out).toContain("Decide");
-    expect(out).toContain("net-new work");
-    expect(out).toContain("fix-up");
+    expect(out).toContain("review-worthy changes");
+    expect(out).toContain("fixes findings from the most recent review");
     expect(out).toContain("⏭️  Skilled PR auto-review: skipped");
     expect(out).toContain("Be conservative");
   });
@@ -129,7 +129,7 @@ describe("buildOnPushReminder", () => {
     // The skip block should be exactly the 3-line format. Searching for
     // the literal lines tests that they survive any future refactors.
     expect(out).toContain("  ⏭️  Skilled PR auto-review: skipped");
-    expect(out).toContain("  Reason: <one sentence — what the recent turns were doing>");
+    expect(out).toContain("  Reason: <one sentence - what the recent turns were doing>");
     expect(out).toContain("  To force a fresh review, invoke the review skill manually.");
   });
 });

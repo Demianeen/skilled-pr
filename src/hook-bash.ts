@@ -19,14 +19,14 @@ import { getCurrentPRContext, resolveProfile } from "./resolve";
 // Operators that compose multiple commands in a single bash invocation.
 // If any appear AFTER the leading-chdir strip, we treat the input as a
 // composite and bail out. Safer to false-negative here.
-const SHELL_OP_AMP = "&&"; // && composed via unicode to keep the literal out of source-scanning hooks
+const SHELL_OP_AMP = "&&";
 const SHELL_OP_SEMI = ";";
 const SHELL_OP_PIPE = "|";
 
 /**
- * Strip a leading `cd <path> [AMP|SEMI]` prefix from a bash command,
- * returning the rest. Returns the original if no chdir prefix present.
- * Quoted paths supported via simple greedy match.
+ * Strip a leading `cd <path> [AMP|SEMI]` prefix from simple bash commands,
+ * returning the rest. This is a heuristic, not a full shell parser; quoted
+ * paths are fine when they do not contain shell composition operators.
  */
 export function stripLeadingChdir(command: string): string {
   const trimmed = command.replace(/^\s+/, "");

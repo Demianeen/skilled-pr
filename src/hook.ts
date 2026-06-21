@@ -252,10 +252,10 @@ export function buildHookOutput(
  * us, so the dominant case (non-Skill PostToolUse,
  * non-required-skill UserPromptExpansion) does no I/O.
  */
-export async function hook() {
+export async function hook(stream: NodeJS.ReadableStream = process.stdin) {
   let event: HookEvent;
   try {
-    const stdin = await readStdin();
+    const stdin = await readStdin(stream);
     if (stdin.trim().length === 0) return;
     event = JSON.parse(stdin) as HookEvent;
   } catch (e) {

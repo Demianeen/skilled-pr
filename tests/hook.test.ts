@@ -1,6 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
+  hook,
   extractSkillName,
   extractLeadingSlashCommand,
   harnessForEvent,
@@ -389,6 +393,71 @@ describe("buildHookOutput", () => {
     const parsed = JSON.parse(out!);
     expect(parsed.hookSpecificOutput.additionalContext).toContain("RULE_PROMPT_MARKER_99");
     expect(parsed.hookSpecificOutput.additionalContext).not.toContain("top-level prompt");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hook() PostToolUse:Bash path
+// ---------------------------------------------------------------------------
+
+describe("hook() PostToolUse:Bash path", () => {
+  let tmp: string;
+  let prevCwd: string;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "skilled-pr-hook-bash-"));
+    prevCwd = process.cwd();
+    process.chdir(tmp);
+    mkdirSync(".skilledpr");
+    writeFileSync(
+      ".skilledpr/config.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        requiredSkills: ["review"],
+        autoReview: { trigger: "on-push" },
+      }),
+    );
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    process.chdir(prevCwd);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("emits hookSpecificOutput for git push", async () => {
+    const payload = JSON.stringify({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git push origin feature" },
+    });
+
+    await hook(Readable.from([payload]));
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+    expect(parsed.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("autoReview.trigger=on-push");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("/review");
+  });
+
+  test("does not emit output for unrelated Bash commands", async () => {
+    const payload = JSON.stringify({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "git status" },
+    });
+
+    await hook(Readable.from([payload]));
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalled();
   });
 });
 

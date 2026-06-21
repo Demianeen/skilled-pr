@@ -2,20 +2,22 @@
 // Sets up Skilled PR in the current repo.
 //
 // What this does (in order):
-//   1. Choose install mode (local devDependency vs global) — flag,
+//   1. Parse install and harness flags.
+//   2. Detect target harnesses (Claude Code, Codex, or both).
+//   3. Choose install mode (local devDependency vs global): flag,
 //      interactive prompt, or auto-detect heuristic.
-//   2. Install skilled-pr@<version> via the detected package manager
+//   4. Install skilled-pr@<version> via the detected package manager
 //      (unless --install-mode=skip).
-//   3. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
-//   4. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
+//   5. Create `.skilledpr/config.jsonc` with v1 defaults (if missing).
+//   6. Copy `schema/v1.json` to `.skilledpr/schema.json` so editors
 //      pick up autocompletion.
-//   5. Ensure `.review/` is gitignored.
-//   6. Install hooks into every detected harness (Claude Code, Codex,
-//      both). Detection scans for `.claude/` and `.codex/`. Override
-//      with `--for claude|codex|both`.
-//   7. Install the /skilled-pr-update skill into each harness's skills
+//   7. Ensure `.review/` is gitignored.
+//   8. Install hooks into every detected harness. Detection scans for
+//      `.claude/` and `.codex/`. Override with `--for claude|codex|both`.
+//   9. Install the /skilled-pr-update skill into each harness's skills
 //      dir so the user can later upgrade via /skilled-pr-update.
-//   8. Print next-step guidance.
+//   10. If enabled, install Claude Code's on-push Bash hook.
+//   11. Print next-step guidance.
 //
 // All the per-harness specifics live in `src/harness/*`. This file is
 // orchestration + the install-mode UI.
@@ -37,7 +39,7 @@ import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc
 
 import { parseInitArgs } from "./args";
 import { CONFIG_PATH, generateDefaultConfig } from "./config";
-import type { Harness } from "./harness";
+import type { ClaudeSettings, Harness } from "./harness";
 import { detectHarnesses, mergeOnPushBashHook, resolveHarnessOverride } from "./harness";
 import { buildInstallArgv, detectPackageManager, type PackageManager } from "./pm-detect";
 
@@ -301,11 +303,6 @@ async function maybeInstallOnPushBashHook(harnesses: ReadonlyArray<Harness>): Pr
   writeFileWithMkdir(claudeHarness.settingsPath, JSON.stringify(merged, null, 2) + "\n");
   console.log(`✓ Updated ${claudeHarness.settingsPath} with PostToolUse:Bash hook for on-push trigger (Claude Code)`);
 }
-
-// Re-export the type used in the helper above so we don't depend on
-// importing directly from the harness module path inside init.ts
-// callers — keeps the file's import block self-contained.
-import type { ClaudeSettings } from "./harness";
 
 /**
  * Interactive prompt asking the user which install mode they want.

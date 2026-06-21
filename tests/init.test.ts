@@ -464,6 +464,38 @@ describe("init() v1 file layout", () => {
     expect(count).toBe(1);
   });
 
+  test("on-push config installs Claude Bash hook and remains idempotent", async () => {
+    mkdirSync(".skilledpr");
+    writeFileSync(
+      ".skilledpr/config.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        requiredSkills: ["review"],
+        autoReview: { trigger: "on-push" },
+      }),
+    );
+
+    await init(["--install-mode=skip", "--for=claude"]);
+    await init(["--install-mode=skip", "--for=claude"]);
+
+    const parsed = JSON.parse(readFileSync(".claude/settings.json", "utf8"));
+    const postToolUse = parsed.hooks.PostToolUse as Array<{
+      matcher?: string;
+      hooks: Array<{ command?: string }>;
+    }>;
+    expect(
+      postToolUse.some(
+        (e) => e.matcher === "Skill" && e.hooks.some((h) => h.command === "skilled-pr hook"),
+      ),
+    ).toBe(true);
+    expect(
+      postToolUse.some(
+        (e) => e.matcher === "Bash" && e.hooks.some((h) => h.command === "skilled-pr hook"),
+      ),
+    ).toBe(true);
+    expect(postToolUse.filter((e) => e.matcher === "Bash")).toHaveLength(1);
+  });
+
   test("continues installing healthy harnesses when one harness config is invalid", async () => {
     mkdirSync(".claude");
     mkdirSync(".codex");

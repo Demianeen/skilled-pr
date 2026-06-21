@@ -44,21 +44,6 @@
 - `$GITHUB_EVENT_PATH` fast-path in `ci-resolve`: when running inside
   a GitHub Actions workflow the PR metadata is already in the event
   payload, no `gh api` call needed. Defer until measured.
-- /review polish on PR #18 (all info-severity, batch into one
-  follow-up commit when convenient):
-    - `stripLeadingChdir`'s docstring overclaims shell-quoting
-      support; the implementation safe-bails on edge cases like
-      escaped quotes, but the docstring suggests broader coverage.
-      Tighten the wording.
-    - No direct unit tests for `mergeOnPushBashHook` idempotency —
-      relies on `installForHarness` integration tests. Add a small
-      unit test mirroring the other `merge*` helpers in the harness.
-    - `init.ts:308` has a mid-file `import type` placement. Move
-      to the top-of-file imports block per repo convention.
-    - UX gap: flipping `autoReview.trigger=on-push` in config
-      post-init doesn't auto-install the bash hook until the user
-      re-runs `init`. Consider a doctor warning when the trigger
-      is on-push but `.claude/settings.json` lacks the bash hook.
 - /review polish on PR #17 (all info-severity, batch into one
   follow-up commit when convenient):
     - `ci-resolve.ts` posts `pending` status on every workflow rerun;
